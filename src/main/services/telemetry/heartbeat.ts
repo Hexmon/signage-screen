@@ -67,6 +67,16 @@ export class HeartbeatService {
    * Send heartbeat to backend
    */
   private async sendHeartbeat(): Promise<void> {
+    let stats:
+      | {
+          uptime: number
+          memoryUsage: number
+          memoryTotal: number
+          cpuUsage: number
+          temperature?: number
+        }
+      | undefined
+
     try {
       const pairingService = getPairingService()
       if (!pairingService.isPairedDevice()) {
@@ -82,19 +92,21 @@ export class HeartbeatService {
 
       // Collect system stats
       const statsCollector = getSystemStatsCollector()
-      const stats = await statsCollector.collect()
+      stats = await statsCollector.collect()
 
       // Prepare heartbeat payload
+      const memoryUsagePercent =
+        stats.memoryTotal > 0 ? Math.round((stats.memoryUsage / stats.memoryTotal) * 1000) / 10 : 0
+
       const payload: HeartbeatPayload = {
         device_id: deviceId,
-        status: 'online',
+        status: 'ONLINE',
         uptime: stats.uptime,
-        memory: stats.memoryUsage,
-        cpu: stats.cpuUsage,
-        temp: stats.temperature,
+        memory_usage: memoryUsagePercent,
+        cpu_usage: Math.round(stats.cpuUsage * 100) / 100,
+        temperature: stats.temperature,
         current_schedule_id: this.currentScheduleId,
         current_media_id: this.currentMediaId,
-        timestamp: new Date().toISOString(),
       }
 
       // Send heartbeat
@@ -112,8 +124,11 @@ export class HeartbeatService {
         url: '/v1/device/heartbeat',
         data: {
           device_id: getPairingService().getDeviceId(),
-          status: 'offline',
-          timestamp: new Date().toISOString(),
+          status: 'OFFLINE',
+          uptime: stats?.uptime ?? 0,
+          memory_usage: 0,
+          cpu_usage: 0,
+          temperature: stats?.temperature,
         },
         maxRetries: 3,
       })
@@ -162,4 +177,3 @@ export function getHeartbeatService(): HeartbeatService {
   }
   return heartbeatService
 }
-

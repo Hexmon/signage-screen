@@ -7,7 +7,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { getLogger } from '../../common/logger'
 import { getConfigManager } from '../../common/config'
-import { ProofOfPlayEvent, ProofOfPlayBatch } from '../../common/types'
+import { ProofOfPlayEvent } from '../../common/types'
 import { atomicWrite, ensureDir, generateId } from '../../common/utils'
 import { getHttpClient } from './network/http-client'
 import { getPairingService } from './pairing-service'
@@ -78,10 +78,14 @@ export class ProofOfPlayService {
     const endTimestamp = new Date().toISOString()
     const startTime = new Date(active.startTimestamp).getTime()
     const endTime = new Date(endTimestamp).getTime()
-    const durationMs = endTime - startTime
+    const durationSeconds = Math.max(0, Math.round((endTime - startTime) / 1000))
 
     const pairingService = getPairingService()
     const deviceId = pairingService.getDeviceId()
+
+    if (errorMessage) {
+      logger.warn({ scheduleId, mediaId, errorMessage }, 'Playback ended with error message')
+    }
 
     if (!deviceId) {
       logger.warn('No device ID available, cannot record PoP event')
@@ -89,20 +93,19 @@ export class ProofOfPlayService {
     }
 
     const event: ProofOfPlayEvent = {
-      deviceId,
-      scheduleId,
-      mediaId,
-      startTimestamp: active.startTimestamp,
-      endTimestamp,
-      durationMs,
+      device_id: deviceId,
+      schedule_id: scheduleId,
+      media_id: mediaId,
+      start_time: active.startTimestamp,
+      end_time: endTimestamp,
+      duration: durationSeconds,
       completed,
-      errorMessage,
     }
 
     // Check for duplicate
     if (!this.isDuplicate(event)) {
       this.eventBuffer.push(event)
-      logger.debug({ scheduleId, mediaId, durationMs, completed }, 'Playback ended')
+      logger.debug({ scheduleId, mediaId, durationSeconds, completed }, 'Playback ended')
 
       // Flush if buffer is full
       if (this.eventBuffer.length >= this.maxBufferSize) {
@@ -121,7 +124,7 @@ export class ProofOfPlayService {
    * Check if event is duplicate
    */
   private isDuplicate(event: ProofOfPlayEvent): boolean {
-    const key = `${event.deviceId}:${event.mediaId}:${event.startTimestamp}`
+    const key = `${event.device_id}:${event.media_id}:${event.start_time}`
     if (this.seenEvents.has(key)) {
       return true
     }
@@ -171,8 +174,9 @@ export class ProofOfPlayService {
         try {
           const data = fs.readFileSync(filePath, 'utf-8')
           const events = JSON.parse(data) as ProofOfPlayEvent[]
-          this.eventBuffer.push(...events)
-          logger.debug({ file, count: events.length }, 'Loaded spooled events')
+          const normalizedEvents = events.map((event) => this.normalizeEvent(event)).filter(Boolean) as ProofOfPlayEvent[]
+          this.eventBuffer.push(...normalizedEvents)
+          logger.debug({ file, count: normalizedEvents.length }, 'Loaded spooled events')
         } catch (error) {
           logger.error({ error, file }, 'Failed to load spooled events')
         }
@@ -211,30 +215,32 @@ export class ProofOfPlayService {
       return
     }
 
-    // Prepare batch
-    const batch: ProofOfPlayBatch = {
-      deviceId,
-      events: [...this.eventBuffer],
-      batchId: generateId(16),
-      timestamp: new Date().toISOString(),
-    }
-
     try {
       const httpClient = getHttpClient()
-      await httpClient.post('/v1/device/proof-of-play', batch)
+      const eventsToFlush = [...this.eventBuffer]
+      const failedEvents: ProofOfPlayEvent[] = []
 
-      logger.info({ batchId: batch.batchId, count: batch.events.length }, 'PoP events flushed successfully')
+      for (const event of eventsToFlush) {
+        try {
+          const payload: ProofOfPlayEvent = {
+            ...event,
+            device_id: event.device_id || deviceId,
+          }
+          await httpClient.post('/v1/device/proof-of-play', payload)
+        } catch (error) {
+          logger.error({ error, event }, 'Failed to flush PoP event')
+          failedEvents.push(event)
+        }
+      }
 
-      // Clear buffer
-      this.eventBuffer = []
+      if (failedEvents.length > 0) {
+        await this.spoolEvents(failedEvents)
+        logger.warn({ failed: failedEvents.length }, 'Some PoP events were spooled for later retry')
+      } else {
+        this.cleanupSpooledFiles()
+        logger.info({ count: eventsToFlush.length }, 'PoP events flushed successfully')
+      }
 
-      // Delete spooled files
-      this.cleanupSpooledFiles()
-    } catch (error) {
-      logger.error({ error }, 'Failed to flush PoP events')
-
-      // Spool to disk for later
-      await this.spoolEvents(batch.events)
       this.eventBuffer = []
     } finally {
       this.isFlushing = false
@@ -311,6 +317,30 @@ export class ProofOfPlayService {
       await this.flushEvents()
     }
   }
+
+  /**
+   * Normalize legacy PoP event shapes into the current API contract
+   */
+  private normalizeEvent(event: any): ProofOfPlayEvent {
+    const pairingService = getPairingService()
+    const durationMs = event.durationMs ?? event.duration_ms
+    const normalizedDuration =
+      typeof event.duration === 'number'
+        ? event.duration
+        : durationMs !== undefined
+          ? Math.max(0, Math.round(Number(durationMs) / 1000))
+          : 0
+
+    return {
+      device_id: event.device_id || event.deviceId || pairingService.getDeviceId() || '',
+      schedule_id: event.schedule_id || event.scheduleId || '',
+      media_id: event.media_id || event.mediaId || '',
+      start_time: event.start_time || event.startTimestamp || event.start_timestamp || new Date().toISOString(),
+      end_time: event.end_time || event.endTimestamp || event.end_timestamp || new Date().toISOString(),
+      duration: normalizedDuration,
+      completed: event.completed ?? true,
+    }
+  }
 }
 
 // Singleton instance
@@ -322,4 +352,3 @@ export function getProofOfPlayService(): ProofOfPlayService {
   }
   return popService
 }
-

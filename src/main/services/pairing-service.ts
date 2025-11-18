@@ -101,6 +101,10 @@ export class PairingService {
       const httpClient = getHttpClient()
       const response = await httpClient.post<PairingResponse>('/v1/device-pairing/complete', request)
 
+      if (response.success === false) {
+        throw new Error('Pairing request was rejected by the server')
+      }
+
       // Complete pairing
       await this.completePairing(response)
 
@@ -116,22 +120,31 @@ export class PairingService {
    * Complete pairing and store credentials
    */
   async completePairing(response: PairingResponse): Promise<void> {
-    logger.info({ deviceId: response.device_id }, 'Completing pairing')
+    logger.info({ deviceId: response.device_id, success: response.success }, 'Completing pairing')
 
     try {
-      // Store certificates
-      const certManager = getCertificateManager()
-      await certManager.storeCertificate(response.certificate, response.ca_certificate)
+      const config = getConfigManager()
+      const currentConfig = config.getConfig()
+
+      if (!response.device_id) {
+        throw new Error('Pairing response missing device_id')
+      }
+
+      // Store certificates if provided
+      const hasCertificates = !!(response.certificate && response.ca_certificate)
+      if (hasCertificates) {
+        const certManager = getCertificateManager()
+        await certManager.storeCertificate(response.certificate!, response.ca_certificate!)
+      }
 
       // Update configuration
-      const config = getConfigManager()
       config.updateConfig({
         deviceId: response.device_id,
-        apiBase: response.api_base,
-        wsUrl: response.ws_url,
+        apiBase: response.api_base || currentConfig.apiBase,
+        wsUrl: response.ws_url || currentConfig.wsUrl,
         mtls: {
-          ...config.getConfig().mtls,
-          enabled: true,
+          ...currentConfig.mtls,
+          enabled: hasCertificates ? true : currentConfig.mtls.enabled,
         },
       })
 
@@ -139,15 +152,22 @@ export class PairingService {
       this.deviceId = response.device_id
       this.isPaired = true
 
-      // Enable mTLS on clients
       const httpClient = getHttpClient()
-      httpClient.enableMTLS()
-      httpClient.setBaseURL(response.api_base)
+      if (response.api_base) {
+        httpClient.setBaseURL(response.api_base)
+      }
 
-      const wsClient = getWebSocketClient()
-      wsClient.enableMTLS()
+      // Enable mTLS on clients when certificates are provided
+      if (hasCertificates) {
+        httpClient.enableMTLS()
+        const wsClient = getWebSocketClient()
+        wsClient.enableMTLS()
+        logger.info('mTLS enabled from pairing response')
+      } else {
+        logger.warn('Pairing response did not include certificates, keeping mTLS disabled')
+      }
 
-      logger.info('Pairing completed and mTLS enabled')
+      logger.info('Pairing completed and configuration updated')
     } catch (error) {
       logger.error({ error }, 'Failed to complete pairing')
       throw error
@@ -300,4 +320,3 @@ export function getPairingService(): PairingService {
   }
   return pairingService
 }
-

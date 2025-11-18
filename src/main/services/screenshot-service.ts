@@ -10,6 +10,7 @@ import { getLogger } from '../../common/logger'
 import { getConfigManager } from '../../common/config'
 import { getHttpClient } from './network/http-client'
 import { getPairingService } from './pairing-service'
+import { getRequestQueue } from './network/request-queue'
 import { atomicWrite, ensureDir, generateId } from '../../common/utils'
 
 const logger = getLogger('screenshot-service')
@@ -92,41 +93,62 @@ export class ScreenshotService {
 
     logger.info({ filepath }, 'Uploading screenshot')
 
+    const timestamp = new Date().toISOString()
+
     try {
       const httpClient = getHttpClient()
+      const buffer = fs.readFileSync(filepath)
+      const payload = {
+        device_id: deviceId,
+        timestamp,
+        image_data: buffer.toString('base64'),
+      }
 
-      // Request presigned URL from backend
-      const response = await httpClient.post<{ upload_url: string; screenshot_url: string }>(
-        `/v1/device/${deviceId}/screenshot/presigned-url`,
-        {
-          filename: path.basename(filepath),
-          content_type: 'image/png',
-        }
+      const response = await httpClient.post<{ success?: boolean; object_key?: string; timestamp?: string }>(
+        '/v1/device/screenshot',
+        payload
       )
 
-      const { upload_url, screenshot_url } = response
+      if (response?.success === false) {
+        throw new Error('Screenshot upload rejected by server')
+      }
 
-      // Read file
-      const buffer = fs.readFileSync(filepath)
-
-      // Upload to presigned URL
-      const axios = httpClient.getAxiosInstance()
-      await axios.put(upload_url, buffer, {
-        headers: {
-          'Content-Type': 'image/png',
-          'Content-Length': buffer.length,
-        },
-      })
-
-      logger.info({ screenshotUrl: screenshot_url }, 'Screenshot uploaded successfully')
+      logger.info({ objectKey: response?.object_key }, 'Screenshot uploaded successfully')
 
       // Delete local file after successful upload
       fs.unlinkSync(filepath)
 
-      return screenshot_url
+      return response?.object_key || ''
     } catch (error) {
-      logger.error({ error, filepath }, 'Failed to upload screenshot')
-      throw error
+      logger.error({ error, filepath }, 'Failed to upload screenshot, queuing for retry')
+
+      // Queue payload for retry to avoid losing screenshots when offline
+      try {
+        const buffer = fs.readFileSync(filepath)
+        const requestQueue = getRequestQueue()
+        await requestQueue.enqueue({
+          method: 'POST',
+          url: '/v1/device/screenshot',
+          data: {
+            device_id: deviceId,
+            timestamp,
+            image_data: buffer.toString('base64'),
+          },
+          maxRetries: 3,
+        })
+        logger.info('Screenshot enqueued for retry')
+      } catch (queueError) {
+        logger.error({ error: queueError }, 'Failed to enqueue screenshot for retry')
+      } finally {
+        try {
+          fs.unlinkSync(filepath)
+        } catch {
+          // ignore cleanup errors
+        }
+      }
+
+      const message = (error as Error).message || 'Screenshot upload failed; queued for retry'
+      throw new Error(`Screenshot upload failed; queued for retry: ${message}`)
     }
   }
 
@@ -144,11 +166,11 @@ export class ScreenshotService {
       const filepath = await this.saveScreenshot(buffer)
 
       // Upload to backend
-      const url = await this.uploadScreenshot(filepath)
+      const objectKey = await this.uploadScreenshot(filepath)
 
-      logger.info({ url }, 'Screenshot captured and uploaded successfully')
+      logger.info({ objectKey }, 'Screenshot captured and uploaded successfully')
 
-      return url
+      return objectKey
     } catch (error) {
       logger.error({ error }, 'Failed to capture and upload screenshot')
       throw error
@@ -222,4 +244,3 @@ export function getScreenshotService(): ScreenshotService {
   }
   return screenshotService
 }
-

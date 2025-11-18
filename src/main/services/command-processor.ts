@@ -8,6 +8,7 @@ import { getLogger } from '../../common/logger'
 import { getConfigManager } from '../../common/config'
 import { Command, CommandResult, CommandType } from '../../common/types'
 import { getHttpClient } from './network/http-client'
+import { getRequestQueue } from './network/request-queue'
 import { getPairingService } from './pairing-service'
 import { getScheduleManager } from './schedule-manager'
 import { getCacheManager } from './cache/cache-manager'
@@ -83,7 +84,8 @@ export class CommandProcessor {
 
     try {
       const httpClient = getHttpClient()
-      const commands = await httpClient.get<Command[]>(`/v1/device/${deviceId}/commands`)
+      const response = await httpClient.get<{ commands: Command[] }>(`/v1/device/${deviceId}/commands`)
+      const commands = response?.commands || []
 
       if (!commands || commands.length === 0) {
         return
@@ -250,12 +252,12 @@ export class CommandProcessor {
 
     try {
       const screenshotService = getScreenshotService()
-      const url = await screenshotService.captureAndUpload()
+      const objectKey = await screenshotService.captureAndUpload()
 
       return {
         success: true,
         message: 'Screenshot captured',
-        data: { url },
+        data: { objectKey },
         timestamp: new Date().toISOString(),
       }
     } catch (error) {
@@ -338,20 +340,35 @@ export class CommandProcessor {
    * Acknowledge command completion
    */
   private async acknowledgeCommand(commandId: string, result: CommandResult): Promise<void> {
-    try {
-      const pairingService = getPairingService()
-      const deviceId = pairingService.getDeviceId()
+    const pairingService = getPairingService()
+    const deviceId = pairingService.getDeviceId()
 
+    try {
       if (!deviceId) {
         return
       }
 
       const httpClient = getHttpClient()
-      await httpClient.post(`/v1/device/${deviceId}/commands/${commandId}/ack`, result)
+      await httpClient.post(`/v1/device/${deviceId}/commands/${commandId}/ack`, {})
 
-      logger.debug({ commandId }, 'Command acknowledged')
+      logger.debug({ commandId, success: result.success }, 'Command acknowledged')
     } catch (error) {
       logger.error({ error, commandId }, 'Failed to acknowledge command')
+
+      try {
+        if (deviceId) {
+          const requestQueue = getRequestQueue()
+          await requestQueue.enqueue({
+            method: 'POST',
+            url: `/v1/device/${deviceId}/commands/${commandId}/ack`,
+            data: {},
+            maxRetries: 3,
+          })
+          logger.info({ commandId }, 'Command acknowledgment queued for retry')
+        }
+      } catch (queueError) {
+        logger.error({ error: queueError, commandId }, 'Failed to queue command acknowledgment')
+      }
     }
   }
 
@@ -399,4 +416,3 @@ export function getCommandProcessor(): CommandProcessor {
   }
   return commandProcessor
 }
-

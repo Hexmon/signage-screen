@@ -163,14 +163,13 @@ export interface NetworkInterface {
 
 export interface HeartbeatPayload {
   device_id: string
-  status: 'online' | 'offline' | 'error'
+  status: 'ONLINE' | 'OFFLINE' | 'ERROR'
   uptime: number
-  memory: number
-  cpu: number
-  temp?: number
+  memory_usage: number
+  cpu_usage: number
+  temperature?: number
   current_schedule_id?: string
   current_media_id?: string
-  timestamp: string
 }
 
 export interface HealthStatus {
@@ -189,21 +188,13 @@ export interface HealthStatus {
 // ============================================================================
 
 export interface ProofOfPlayEvent {
-  deviceId: string
-  scheduleId: string
-  mediaId: string
-  startTimestamp: string
-  endTimestamp?: string
-  durationMs?: number
+  device_id: string
+  schedule_id: string
+  media_id: string
+  start_time: string
+  end_time: string
+  duration: number
   completed: boolean
-  errorMessage?: string
-}
-
-export interface ProofOfPlayBatch {
-  deviceId: string
-  events: ProofOfPlayEvent[]
-  batchId: string
-  timestamp: string
 }
 
 // ============================================================================
@@ -273,15 +264,16 @@ export interface DiagnosticsInfo {
 export interface PairingRequest {
   pairing_code: string
   csr: string
-  device_info: DeviceInfo
+  device_info?: DeviceInfo
 }
 
 export interface PairingResponse {
   device_id: string
-  certificate: string
-  ca_certificate: string
-  api_base: string
-  ws_url: string
+  success?: boolean
+  certificate?: string
+  ca_certificate?: string
+  api_base?: string
+  ws_url?: string
 }
 
 // ============================================================================
@@ -355,4 +347,3 @@ export class PlaybackError extends AppError {
     this.name = 'PlaybackError'
   }
 }
-

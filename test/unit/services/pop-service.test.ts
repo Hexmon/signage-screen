@@ -180,9 +180,9 @@ describe('Proof-of-Play Service', () => {
         {
           schedule_id: 'schedule-1',
           media_id: 'media-1',
-          start_timestamp: new Date().toISOString(),
-          end_timestamp: new Date().toISOString(),
-          duration_ms: 1000,
+          start_time: new Date().toISOString(),
+          end_time: new Date().toISOString(),
+          duration: 1,
           completed: true,
         },
       ]
@@ -230,4 +230,3 @@ describe('Proof-of-Play Service', () => {
     })
   })
 })
-
