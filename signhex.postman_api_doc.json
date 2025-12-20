@@ -1,0 +1,4047 @@
+{
+	"info": {
+		"_postman_id": "247e5cd1-902c-4062-88bf-c4e5bbc13f2b",
+		"name": "signhex",
+		"description": "# signhex API Collection\n\nThe signhex API provides a comprehensive set of endpoints for managing digital signage networks, including user management, device pairing, screen scheduling, media uploads, notifications, audit logs, and more. This collection is designed to help developers onboard quickly and efficiently, with organized folders for each major resource and workflow. Authentication, error handling, and common patterns are demonstrated throughout. Use this collection to:\n\n- Authenticate and manage users\n- Pair and monitor devices\n- Schedule and publish content\n- Upload and manage media assets\n- Track audit logs and system events\n- Handle notifications and emergency events\n- Integrate with webhooks and SSO\n\n**Base URL:** Set the `baseURL` variable in your environment to point to your API instance.\n\n**Authentication:** Most endpoints require an `authToken` (see Auth folder for login/logout flows).\n\n**Best Practices:**\n- Use environment variables for sensitive data and configuration.\n- Review folder-level documentation for endpoint groupings and use cases.\n- Refer to request-level descriptions for required parameters and typical workflows.\n\nFor more details, see the documentation for each folder and request.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "18300371",
+		"_collection_link": "https://api222-1255.postman.co/workspace/34627d03-8935-4402-815e-a5bb8d76a57e/collection/18300371-247e5cd1-902c-4062-88bf-c4e5bbc13f2b?action=share&source=collection_link&creator=18300371"
+	},
+	"item": [
+		{
+			"name": "Auth",
+			"item": [
+				{
+					"name": "Login",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"email\": \"{{adminEmail}}\",\r\n    \"password\": \"{{adminPassword}}\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/auth/login",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"auth",
+								"login"
+							]
+						}
+					},
+					"response": [
+						{
+							"name": "Login",
+							"originalRequest": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\"email\":\"\",\"password\":\"\"}",
+									"options": {
+										"raw": {
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "https://api.entitysport.com/v1/auth/login",
+									"protocol": "https",
+									"host": [
+										"api",
+										"entitysport",
+										"com"
+									],
+									"path": [
+										"v1",
+										"auth",
+										"login"
+									]
+								}
+							},
+							"_postman_previewlanguage": null,
+							"header": null,
+							"cookie": [],
+							"body": null
+						}
+					]
+				},
+				{
+					"name": "logout",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/auth/logout",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"auth",
+								"logout"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "current user",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/auth/me",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"auth",
+								"me"
+							]
+						}
+					},
+					"response": [
+						{
+							"name": "current user",
+							"originalRequest": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "Authorization",
+										"value": "Bearer "
+									}
+								],
+								"url": {
+									"raw": "https://api.entitysport.com/v1/auth/me",
+									"protocol": "https",
+									"host": [
+										"api",
+										"entitysport",
+										"com"
+									],
+									"path": [
+										"v1",
+										"auth",
+										"me"
+									]
+								}
+							},
+							"_postman_previewlanguage": null,
+							"header": null,
+							"cookie": [],
+							"body": null
+						}
+					]
+				}
+			],
+			"description": "Authentication endpoints for user login, logout, and retrieving the current authenticated user. Use these endpoints to obtain and manage authentication tokens required for other API requests."
+		},
+		{
+			"name": "Users",
+			"item": [
+				{
+					"name": "add new",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"email\": \"new@user.com\",\r\n    \"password\": \"ChangeMe123\",\r\n    \"first_name\": \"New\",\r\n    \"last_name\": \"User\",\r\n    \"role\": \"OPERATOR\",\r\n    \"department_id\": \"{{deptId}}\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/users",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"users"
+							]
+						}
+					},
+					"response": [
+						{
+							"name": "add new",
+							"originalRequest": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "Authorization",
+										"value": "Bearer "
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\r\n    \"email\": \"new@user.com\",\r\n    \"password\": \"ChangeMe123\",\r\n    \"first_name\": \"New\",\r\n    \"last_name\": \"User\",\r\n    \"role\": \"OPERATOR\",\r\n    \"department_id\": \"\"\r\n}",
+									"options": {
+										"raw": {
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "https://api.entitysport.com/v1/users",
+									"protocol": "https",
+									"host": [
+										"api",
+										"entitysport",
+										"com"
+									],
+									"path": [
+										"v1",
+										"users"
+									]
+								}
+							},
+							"_postman_previewlanguage": null,
+							"header": null,
+							"cookie": [],
+							"body": null
+						}
+					]
+				},
+				{
+					"name": "Get all",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/users?page={{page}}&limit={{limit}}&role={{role}}&department_id={{deptId}}&is_active={{true|false}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"users"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "{{page}}"
+								},
+								{
+									"key": "limit",
+									"value": "{{limit}}"
+								},
+								{
+									"key": "role",
+									"value": "{{role}}"
+								},
+								{
+									"key": "department_id",
+									"value": "{{deptId}}"
+								},
+								{
+									"key": "is_active",
+									"value": "{{true|false}}"
+								}
+							]
+						}
+					},
+					"response": [
+						{
+							"name": "Get all",
+							"originalRequest": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "Authorization",
+										"value": "Bearer "
+									}
+								],
+								"url": {
+									"raw": "https://api.entitysport.com/v1/users?page=&limit=&role=&department_id=&is_active=",
+									"protocol": "https",
+									"host": [
+										"api",
+										"entitysport",
+										"com"
+									],
+									"path": [
+										"v1",
+										"users"
+									],
+									"query": [
+										{
+											"key": "page",
+											"value": ""
+										},
+										{
+											"key": "limit",
+											"value": ""
+										},
+										{
+											"key": "role",
+											"value": ""
+										},
+										{
+											"key": "department_id",
+											"value": ""
+										},
+										{
+											"key": "is_active",
+											"value": ""
+										}
+									]
+								}
+							},
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json",
+									"description": "",
+									"type": "text"
+								}
+							],
+							"cookie": [
+								{
+									"expires": "Invalid Date",
+									"domain": "",
+									"path": ""
+								}
+							],
+							"body": ""
+						}
+					]
+				},
+				{
+					"name": "Get by userId",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/users/{{userid}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"users",
+								"{{userid}}"
+							]
+						}
+					},
+					"response": [
+						{
+							"name": "Get by userId",
+							"originalRequest": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "Authorization",
+										"value": "Bearer "
+									}
+								],
+								"url": {
+									"raw": "https://api.entitysport.com/v1/users/",
+									"protocol": "https",
+									"host": [
+										"api",
+										"entitysport",
+										"com"
+									],
+									"path": [
+										"v1",
+										"users",
+										""
+									]
+								}
+							},
+							"_postman_previewlanguage": null,
+							"header": null,
+							"cookie": [],
+							"body": null
+						}
+					]
+				},
+				{
+					"name": "Update",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"first_name\": \"Updated\",\r\n    \"last_name\": \"Name\",\r\n    \"role\": \"OPERATOR\",\r\n    \"department_id\": \"{{deptId}}\",\r\n    \"is_active\": true\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/users/{{userid}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"users",
+								"{{userid}}"
+							]
+						}
+					},
+					"response": [
+						{
+							"name": "Update",
+							"originalRequest": {
+								"method": "PATCH",
+								"header": [
+									{
+										"key": "Authorization",
+										"value": "Bearer "
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\r\n    \"first_name\": \"Updated\",\r\n    \"last_name\": \"Name\",\r\n    \"role\": \"OPERATOR\",\r\n    \"department_id\": \"\",\r\n    \"is_active\": true\r\n}",
+									"options": {
+										"raw": {
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "https://api.entitysport.com/v1/users/",
+									"protocol": "https",
+									"host": [
+										"api",
+										"entitysport",
+										"com"
+									],
+									"path": [
+										"v1",
+										"users",
+										""
+									]
+								}
+							},
+							"_postman_previewlanguage": null,
+							"header": null,
+							"cookie": [],
+							"body": null
+						}
+					]
+				},
+				{
+					"name": "Delete",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/users/{{userid}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"users",
+								"{{userid}}"
+							]
+						}
+					},
+					"response": [
+						{
+							"name": "Delete",
+							"originalRequest": {
+								"method": "DELETE",
+								"header": [
+									{
+										"key": "Authorization",
+										"value": "Bearer "
+									}
+								],
+								"url": {
+									"raw": "https://api.entitysport.com/v1/users/",
+									"protocol": "https",
+									"host": [
+										"api",
+										"entitysport",
+										"com"
+									],
+									"path": [
+										"v1",
+										"users",
+										""
+									]
+								}
+							},
+							"_postman_previewlanguage": null,
+							"header": null,
+							"cookie": [],
+							"body": null
+						}
+					]
+				},
+				{
+					"name": "Invite users",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"email\": \"invitee@org.com\",\r\n    \"role\": \"OPERATOR\",\r\n    \"department_id\": \"{{deptId}}\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/users/invite",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"users",
+								"invite"
+							]
+						}
+					},
+					"response": [
+						{
+							"name": "Invite users",
+							"originalRequest": {
+								"method": "GET",
+								"header": []
+							},
+							"_postman_previewlanguage": null,
+							"header": null,
+							"cookie": [],
+							"body": null
+						}
+					]
+				},
+				{
+					"name": "Active invited uses",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"token\": \"{{inviteToken}}\",\r\n    \"password\": \"NewStrongPass123\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/users/activate",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"users",
+								"activate"
+							]
+						}
+					},
+					"response": [
+						{
+							"name": "Active invited uses",
+							"originalRequest": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\r\n    \"token\": \"\",\r\n    \"password\": \"NewStrongPass123\"\r\n}",
+									"options": {
+										"raw": {
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "https://api.entitysport.com/v1/users/activate",
+									"protocol": "https",
+									"host": [
+										"api",
+										"entitysport",
+										"com"
+									],
+									"path": [
+										"v1",
+										"users",
+										"activate"
+									]
+								}
+							},
+							"_postman_previewlanguage": null,
+							"header": null,
+							"cookie": [],
+							"body": null
+						}
+					]
+				},
+				{
+					"name": "Reset Password",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/users/{{userId}}/reset-password",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"users",
+								"{{userId}}",
+								"reset-password"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "User management endpoints for creating, updating, deleting, and listing users. Includes user invitations, activation, and password reset workflows."
+		},
+		{
+			"name": "Screens",
+			"item": [
+				{
+					"name": "Create",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"name\": \"Lobby TV\",\r\n    \"location\": \"Lobby\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/screens",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"screens"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "list",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/screens?page={{page}}&limit={{limit}}&status={{ACTIVE|INACTIVE|OFFLINE}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"screens"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "{{page}}"
+								},
+								{
+									"key": "limit",
+									"value": "{{limit}}"
+								},
+								{
+									"key": "status",
+									"value": "{{ACTIVE|INACTIVE|OFFLINE}}"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get by id",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/screens/{{screenId}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"screens",
+								"{{screenId}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "update",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"name\": \"Lobby TV\",\r\n    \"is_active\": true\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/screens/{{screenId}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"screens",
+								"{{screenId}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "delete",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/screens/{{screenId}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"screens",
+								"{{screenId}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Create Screen Group",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"name\": \"HQ Group\",\r\n    \"screen_ids\": [\r\n        \"{{screenId}}\"\r\n    ]\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/screen-groups",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"screen-groups"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "List Screen Grp",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/screen-groups",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"screen-groups"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Update screen grp",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"screen_ids\":[\"{{screenId}}\"]}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/screen-groups/{{screenGroupId}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"screen-groups",
+								"{{screenGroupId}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Screen grp",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/screen-groups/{{screenGroupId}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"screen-groups",
+								"{{screenGroupId}}"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints for managing screens, including creation, updates, deletion, and listing of screens and screen groups."
+		},
+		{
+			"name": "Media",
+			"item": [
+				{
+					"name": "Get Presign upload URL",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"filename\": \"banner.png\",\r\n    \"content_type\": \"image/png\",\r\n    \"size\": 12345\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/media/presign-upload",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"media",
+								"presign-upload"
+							]
+						}
+					},
+					"response": [
+						{
+							"name": "Presign upload",
+							"originalRequest": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "Authorization",
+										"value": "Bearer {{authToken}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\r\n    \"filename\": \"banner.png\",\r\n    \"content_type\": \"image/png\",\r\n    \"size\": 12345\r\n}",
+									"options": {
+										"raw": {
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "{{baseURL}}/v1/media/presign-upload",
+									"host": [
+										"{{baseURL}}"
+									],
+									"path": [
+										"v1",
+										"media",
+										"presign-upload"
+									]
+								}
+							},
+							"_postman_previewlanguage": null,
+							"header": null,
+							"cookie": [],
+							"body": null
+						}
+					]
+				},
+				{
+					"name": "Create metadata",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"name\": \"Banner\",\r\n    \"type\": \"IMAGE\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/media",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"media"
+							]
+						}
+					},
+					"response": [
+						{
+							"name": "Create metadata",
+							"originalRequest": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "Authorization",
+										"value": "Bearer {{authToken}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\"name\":\"Banner\",\"type\":\"IMAGE\"}",
+									"options": {
+										"raw": {
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "{{baseURL}}/v1/media",
+									"host": [
+										"{{baseURL}}"
+									],
+									"path": [
+										"v1",
+										"media"
+									]
+								}
+							},
+							"_postman_previewlanguage": null,
+							"header": null,
+							"cookie": [],
+							"body": null
+						}
+					]
+				},
+				{
+					"name": "List",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/media?page={{page}}&limit={{limit}}&type={{IMAGE|VIDEO|DOCUMENT}}&status={{PENDING|PROCESSING|READY|FAILED}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"media"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "{{page}}"
+								},
+								{
+									"key": "limit",
+									"value": "{{limit}}"
+								},
+								{
+									"key": "type",
+									"value": "{{IMAGE|VIDEO|DOCUMENT}}"
+								},
+								{
+									"key": "status",
+									"value": "{{PENDING|PROCESSING|READY|FAILED}}"
+								}
+							]
+						}
+					},
+					"response": [
+						{
+							"name": "List",
+							"originalRequest": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "Authorization",
+										"value": "Bearer {{authToken}}"
+									}
+								],
+								"url": {
+									"raw": "{{baseURL}}/v1/media?page={{page}}&limit={{limit}}&type={{IMAGE|VIDEO|DOCUMENT}}&status={{PENDING|PROCESSING|READY|FAILED}}",
+									"host": [
+										"{{baseURL}}"
+									],
+									"path": [
+										"v1",
+										"media"
+									],
+									"query": [
+										{
+											"key": "page",
+											"value": "{{page}}"
+										},
+										{
+											"key": "limit",
+											"value": "{{limit}}"
+										},
+										{
+											"key": "type",
+											"value": "{{IMAGE|VIDEO|DOCUMENT}}"
+										},
+										{
+											"key": "status",
+											"value": "{{PENDING|PROCESSING|READY|FAILED}}"
+										}
+									]
+								}
+							},
+							"_postman_previewlanguage": null,
+							"header": null,
+							"cookie": [],
+							"body": null
+						}
+					]
+				},
+				{
+					"name": "get by id",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/media/{{mediaId}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"media",
+								"{{mediaId}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Confirmation of Complete Upload",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"status\": \"READY\",\r\n    \"width\": 1920,\r\n    \"height\": 1080,\r\n    \"duration_seconds\": 15\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/media/{{mediaId}}/complete",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"media",
+								"{{mediaId}}",
+								"complete"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Delete",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/media/{{mediaId}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"media",
+								"{{mediaId}}"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Media management endpoints for uploading, listing, retrieving, and deleting media assets. Supports presigned upload URLs and completion confirmation."
+		},
+		{
+			"name": "Department",
+			"item": [
+				{
+					"name": "Add new",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"name\": \"HQ\",\r\n    \"description\": \"Main\",\r\n    \"manager_id\": \"{{userid}}\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/departments",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"departments"
+							]
+						}
+					},
+					"response": [
+						{
+							"name": "Add new",
+							"originalRequest": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "Authorization",
+										"value": "Bearer {{authToken}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\"name\":\"Comms\",\"description\":\"Displays\"}",
+									"options": {
+										"raw": {
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "{{baseURL}}/v1/departments",
+									"host": [
+										"{{baseURL}}"
+									],
+									"path": [
+										"v1",
+										"departments"
+									]
+								}
+							},
+							"_postman_previewlanguage": null,
+							"header": null,
+							"cookie": [],
+							"body": null
+						}
+					]
+				},
+				{
+					"name": "List",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/departments?page={{page}}&limit={{limit}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"departments"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "{{page}}"
+								},
+								{
+									"key": "limit",
+									"value": "{{limit}}"
+								}
+							]
+						}
+					},
+					"response": [
+						{
+							"name": "List",
+							"originalRequest": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "Authorization",
+										"value": "Bearer {{authToken}}"
+									}
+								],
+								"url": {
+									"raw": "{{baseURL}}/v1/departments?page={{page}}&limit={{limit}}",
+									"host": [
+										"{{baseURL}}"
+									],
+									"path": [
+										"v1",
+										"departments"
+									],
+									"query": [
+										{
+											"key": "page",
+											"value": "{{page}}"
+										},
+										{
+											"key": "limit",
+											"value": "{{limit}}"
+										}
+									]
+								}
+							},
+							"_postman_previewlanguage": null,
+							"header": null,
+							"cookie": [],
+							"body": null
+						}
+					]
+				},
+				{
+					"name": "Get by id",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/departments/{{deptId}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"departments",
+								"{{deptId}}"
+							]
+						}
+					},
+					"response": [
+						{
+							"name": "Get by id",
+							"originalRequest": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "Authorization",
+										"value": "Bearer {{authToken}}"
+									}
+								],
+								"url": {
+									"raw": "{{baseURL}}/v1/departments/{{deptId}}",
+									"host": [
+										"{{baseURL}}"
+									],
+									"path": [
+										"v1",
+										"departments",
+										"{{deptId}}"
+									]
+								}
+							},
+							"_postman_previewlanguage": null,
+							"header": null,
+							"cookie": [],
+							"body": null
+						}
+					]
+				},
+				{
+					"name": "update",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"name\": \"Comms\",\r\n    \"description\": \"Updated\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/departments/{{deptId}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"departments",
+								"{{deptId}}"
+							]
+						}
+					},
+					"response": [
+						{
+							"name": "update",
+							"originalRequest": {
+								"method": "PATCH",
+								"header": [
+									{
+										"key": "Authorization",
+										"value": "Bearer {{authToken}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\"name\":\"Comms\",\"description\":\"Updated\"}",
+									"options": {
+										"raw": {
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "{{baseURL}}/v1/departments/{{deptId}}",
+									"host": [
+										"{{baseURL}}"
+									],
+									"path": [
+										"v1",
+										"departments",
+										"{{deptId}}"
+									]
+								}
+							},
+							"_postman_previewlanguage": null,
+							"header": null,
+							"cookie": [],
+							"body": null
+						}
+					]
+				},
+				{
+					"name": "Delete",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/departments/{{deptId}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"departments",
+								"{{deptId}}"
+							]
+						}
+					},
+					"response": [
+						{
+							"name": "Delete",
+							"originalRequest": {
+								"method": "DELETE",
+								"header": [
+									{
+										"key": "Authorization",
+										"value": "Bearer {{authToken}}"
+									}
+								],
+								"url": {
+									"raw": "{{baseURL}}/v1/departments/{{deptId}}",
+									"host": [
+										"{{baseURL}}"
+									],
+									"path": [
+										"v1",
+										"departments",
+										"{{deptId}}"
+									]
+								}
+							},
+							"_postman_previewlanguage": null,
+							"header": null,
+							"cookie": [],
+							"body": null
+						}
+					]
+				}
+			],
+			"description": "Department management endpoints for creating, updating, listing, and deleting departments within the organization."
+		},
+		{
+			"name": "Schedules",
+			"item": [
+				{
+					"name": "Create",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"name\": \"Morning Loop\",\r\n    \"description\": \"9-12\",\r\n    \"start_at\":\"2025-12-01T09:00:00Z\",\r\n    \"end_at\":\"2025-12-01T12:00:00Z\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/schedules",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"schedules"
+							]
+						}
+					},
+					"response": [
+						{
+							"name": "Create",
+							"originalRequest": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "Authorization",
+										"value": "Bearer {{authToken}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\r\n    \"name\": \"Morning Loop\",\r\n    \"description\": \"9-12\",\r\n    \"start_at\":\"2025-12-01T09:00:00Z\",\r\n    \"end_at\":\"2025-12-01T12:00:00Z\"\r\n}",
+									"options": {
+										"raw": {
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "{{baseURL}}/v1/schedules",
+									"host": [
+										"{{baseURL}}"
+									],
+									"path": [
+										"v1",
+										"schedules"
+									]
+								}
+							},
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json",
+									"description": "",
+									"type": "text"
+								}
+							],
+							"cookie": [],
+							"body": ""
+						}
+					]
+				},
+				{
+					"name": "list",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/schedules?page={{page}}&limit={{limit}}&is_active={{true|false}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"schedules"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "{{page}}"
+								},
+								{
+									"key": "limit",
+									"value": "{{limit}}"
+								},
+								{
+									"key": "is_active",
+									"value": "{{true|false}}"
+								}
+							]
+						}
+					},
+					"response": [
+						{
+							"name": "list",
+							"originalRequest": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "Authorization",
+										"value": "Bearer {{authToken}}"
+									}
+								],
+								"url": {
+									"raw": "{{baseURL}}/v1/schedules?page={{page}}&limit={{limit}}&is_active={{true|false}}",
+									"host": [
+										"{{baseURL}}"
+									],
+									"path": [
+										"v1",
+										"schedules"
+									],
+									"query": [
+										{
+											"key": "page",
+											"value": "{{page}}"
+										},
+										{
+											"key": "limit",
+											"value": "{{limit}}"
+										},
+										{
+											"key": "is_active",
+											"value": "{{true|false}}"
+										}
+									]
+								}
+							},
+							"_postman_previewlanguage": null,
+							"header": null,
+							"cookie": [],
+							"body": null
+						}
+					]
+				},
+				{
+					"name": "Get by id",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/schedules/{{scheduleId}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"schedules",
+								"{{scheduleId}}"
+							]
+						}
+					},
+					"response": [
+						{
+							"name": "Get by id",
+							"originalRequest": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "Authorization",
+										"value": "Bearer {{authToken}}"
+									}
+								],
+								"url": {
+									"raw": "{{baseURL}}/v1/schedules/{{scheduleId}}",
+									"host": [
+										"{{baseURL}}"
+									],
+									"path": [
+										"v1",
+										"schedules",
+										"{{scheduleId}}"
+									]
+								}
+							},
+							"_postman_previewlanguage": null,
+							"header": null,
+							"cookie": [],
+							"body": null
+						}
+					]
+				},
+				{
+					"name": "Update",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"name\": \"Updated\",\r\n    \"description\": \"desc\",\r\n    \"start_at\": \"2025-12-02T09:00:00.000Z\",\r\n    \"end_at\": \"2025-12-02T12:00:00.000Z\",\r\n    \"is_active\": true\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/schedules/{{scheduleId}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"schedules",
+								"{{scheduleId}}"
+							]
+						}
+					},
+					"response": [
+						{
+							"name": "Update",
+							"originalRequest": {
+								"method": "PATCH",
+								"header": [
+									{
+										"key": "Authorization",
+										"value": "Bearer {{authToken}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\r\n    \"name\": \"Updated\",\r\n    \"description\": \"desc\",\r\n    \"start_at\": \"2025-12-02T09:00:00.000Z\",\r\n    \"end_at\": \"2025-12-02T12:00:00.000Z\",\r\n    \"is_active\": true\r\n}",
+									"options": {
+										"raw": {
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "{{baseURL}}/v1/schedules/{{scheduleId}}",
+									"host": [
+										"{{baseURL}}"
+									],
+									"path": [
+										"v1",
+										"schedules",
+										"{{scheduleId}}"
+									]
+								}
+							},
+							"_postman_previewlanguage": null,
+							"header": null,
+							"cookie": [],
+							"body": null
+						}
+					]
+				},
+				{
+					"name": "publish",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"screen_ids\": [\r\n        \"{{screenId}}\"\r\n    ],\r\n    \"screen_group_ids\": [\"{{screenGroupId}}\"]\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/schedules/{{scheduleId}}/publish",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"schedules",
+								"{{scheduleId}}",
+								"publish"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Publish status",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/publishes/{{publishId}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"publishes",
+								"{{publishId}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Publish Targets History",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/schedules/{{scheduleId}}/publishes",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"schedules",
+								"{{scheduleId}}",
+								"publishes"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Update Target history",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"status\":\"SENT\",\"error\":null}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/publishes/{{publishId}}/targets/{{targetId}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"publishes",
+								"{{publishId}}",
+								"targets",
+								"{{targetId}}"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints for creating, updating, listing, and publishing schedules. Includes management of schedule targets and publish history."
+		},
+		{
+			"name": "Audit Log",
+			"item": [
+				{
+					"name": "List",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/audit-logs?page={{page}}&limit={{limit}}&user_id={{userId}}&resource_type={{type}}&action={{action}}&start_date={{iso}}&end_date={{iso}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"audit-logs"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "{{page}}"
+								},
+								{
+									"key": "limit",
+									"value": "{{limit}}"
+								},
+								{
+									"key": "user_id",
+									"value": "{{userId}}"
+								},
+								{
+									"key": "resource_type",
+									"value": "{{type}}"
+								},
+								{
+									"key": "action",
+									"value": "{{action}}"
+								},
+								{
+									"key": "start_date",
+									"value": "{{iso}}"
+								},
+								{
+									"key": "end_date",
+									"value": "{{iso}}"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get by id",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/audit-logs/{{auditLogId}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"audit-logs",
+								"{{auditLogId}}"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Audit log endpoints for retrieving system activity logs and details for compliance and monitoring purposes."
+		},
+		{
+			"name": "Emergency",
+			"item": [
+				{
+					"name": "Trigger",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"message\":\"Fire alarm\",\"severity\":\"CRITICAL\"}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/emergency/trigger",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"emergency",
+								"trigger"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "status",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/emergency/status",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"emergency",
+								"status"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Clear",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/emergency/{{emergencyId}}/clear",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"emergency",
+								"{{emergencyId}}",
+								"clear"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "history",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/emergency/history?page={{page}}&limit={{limit}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"emergency",
+								"history"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "{{page}}"
+								},
+								{
+									"key": "limit",
+									"value": "{{limit}}"
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Emergency management endpoints for triggering, clearing, and monitoring emergency events and their history."
+		},
+		{
+			"name": "Notifications",
+			"item": [
+				{
+					"name": "List",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/notifications?page={{page}}&limit={{limit}}&read={{true|false}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"notifications"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "{{page}}"
+								},
+								{
+									"key": "limit",
+									"value": "{{limit}}"
+								},
+								{
+									"key": "read",
+									"value": "{{true|false}}"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Mark read",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/notifications/{{notificationId}}/read",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"notifications",
+								"{{notificationId}}",
+								"read"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "get by id",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/notifications/{{notificationId}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"notifications",
+								"{{notificationId}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Mark all read",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/notifications/read-all",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"notifications",
+								"read-all"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Delete",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/notifications/{{notificationId}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"notifications",
+								"{{notificationId}}"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Notification endpoints for listing, marking as read, and deleting notifications. Supports both bulk and individual notification management."
+		},
+		{
+			"name": "Presentations",
+			"item": [
+				{
+					"name": "create",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"name\":\"Q1 Update\",\"description\":\"Deck\"}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/presentations",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"presentations"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "list",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/presentations?page={{page}}&limit={{limit}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"presentations"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "{{page}}"
+								},
+								{
+									"key": "limit",
+									"value": "{{limit}}"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get by id",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/presentations/{{presentationId}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"presentations",
+								"{{presentationId}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "update",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"name\":\"Q1 Update\",\"description\":\"New desc\"}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/presentations/{{presentationId}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"presentations",
+								"{{presentationId}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "delete",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/presentations/{{presentationId}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"presentations",
+								"{{presentationId}}"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints for creating, updating, listing, retrieving, and deleting presentations. Supports presentation lifecycle management."
+		},
+		{
+			"name": "Device Pairing",
+			"item": [
+				{
+					"name": "Generate Pairing code",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"device_id\": \"{{deviceId}}\",\r\n    \"expires_in\": 3600\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/device-pairing/generate",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"device-pairing",
+								"generate"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Complete Pairing",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"pairing_code\": \"{{pairingCode}}\",\r\n    \"csr\": \"{{base64OrPemCsr}}\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/device-pairing/complete",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"device-pairing",
+								"complete"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "List pairing",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/device-pairing?page={{page}}&limit={{limit}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"device-pairing"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "{{page}}"
+								},
+								{
+									"key": "limit",
+									"value": "{{limit}}"
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Device pairing endpoints for generating, completing, and listing device pairing codes. Used to securely onboard new devices to the network."
+		},
+		{
+			"name": "Device Telemetry",
+			"item": [
+				{
+					"name": "Heartbeat",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"device_id\": \"{{deviceId}}\",\r\n    \"status\": \"ONLINE\",\r\n    \"uptime\": 1234,\r\n    \"memory_usage\": 42.1,\r\n    \"cpu_usage\": 12.3,\r\n    \"temperature\": 55,\r\n    \"current_schedule_id\": \"{{scheduleId}}\",\r\n    \"current_media_id\": \"{{mediaId}}\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/device/heartbeat",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"device",
+								"heartbeat"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Proof of play",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"device_id\": \"{{deviceId}}\",\r\n    \"media_id\": \"{{mediaId}}\",\r\n    \"schedule_id\": \"{{scheduleId}}\",\r\n    \"start_time\": \"2024-01-01T00:00:00Z\",\r\n    \"end_time\": \"2024-01-01T00:00:05Z\",\r\n    \"duration\": 5,\r\n    \"completed\": true\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/device/proof-of-play",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"device",
+								"proof-of-play"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Screenshot upload",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"device_id\": \"{{deviceId}}\",\r\n    \"timestamp\": \"2024-01-01T00:00:00Z\",\r\n    \"image_data\": \"{{base64Png}}\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/device/screenshot",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"device",
+								"screenshot"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get pending command",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseURL}}/v1/device/{{deviceId}}/commands",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"device",
+								"{{deviceId}}",
+								"commands"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "ack command",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseURL}}/v1/device/{{deviceId}}/commands/{{commandId}}/ack",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"device",
+								"{{deviceId}}",
+								"commands",
+								"{{commandId}}",
+								"ack"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Device telemetry endpoints for reporting device status, uploading screenshots, sending heartbeats, and acknowledging commands."
+		},
+		{
+			"name": "Proof of Play(analytics)",
+			"item": [
+				{
+					"name": "List with filter",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/proof-of-play?page=1&limit=20&screen_id={{screenId}}&media_id={{mediaId}}&start=2024-01-01T00:00:00Z&end=2024-01-31T23:59:59Z&status=COMPLETED",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"proof-of-play"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "20"
+								},
+								{
+									"key": "screen_id",
+									"value": "{{screenId}}"
+								},
+								{
+									"key": "media_id",
+									"value": "{{mediaId}}"
+								},
+								{
+									"key": "start",
+									"value": "2024-01-01T00:00:00Z"
+								},
+								{
+									"key": "end",
+									"value": "2024-01-31T23:59:59Z"
+								},
+								{
+									"key": "status",
+									"value": "COMPLETED"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Grouping (chats)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/proof-of-play?group_by=day&start=2024-01-01T00:00:00Z&end=2024-01-31T23:59:59Z",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"proof-of-play"
+							],
+							"query": [
+								{
+									"key": "group_by",
+									"value": "day"
+								},
+								{
+									"key": "start",
+									"value": "2024-01-01T00:00:00Z"
+								},
+								{
+									"key": "end",
+									"value": "2024-01-31T23:59:59Z"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "include URLs",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/proof-of-play?page=1&limit=20&include_url=true",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"proof-of-play"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "20"
+								},
+								{
+									"key": "include_url",
+									"value": "true"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Export CSV",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/proof-of-play/export?start=2024-01-01T00:00:00Z&end=2024-01-31T23:59:59Z",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"proof-of-play",
+								"export"
+							],
+							"query": [
+								{
+									"key": "start",
+									"value": "2024-01-01T00:00:00Z"
+								},
+								{
+									"key": "end",
+									"value": "2024-01-31T23:59:59Z"
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Proof of play analytics endpoints for retrieving playback data, exporting reports, and filtering by screen, media, or date."
+		},
+		{
+			"name": "Requests / Tickets",
+			"item": [
+				{
+					"name": "Create",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"title\":\"Need update\",\"description\":\"Please change content\",\"priority\":\"HIGH\",\"assigned_to\":\"{{userId}}\"}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/requests",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"requests"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "List",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/requests?page=1&limit=50&status=OPEN",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"requests"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "50"
+								},
+								{
+									"key": "status",
+									"value": "OPEN"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Update",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"status\":\"IN_PROGRESS\",\"assigned_to\":\"{{userId}}\"}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/requests/{{requestId}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"requests",
+								"{{requestId}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Comment",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"content\":\"On it\"}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/requests/{{requestId}}/messages",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"requests",
+								"{{requestId}}",
+								"messages"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints for creating, updating, listing, and commenting on support requests or tickets."
+		},
+		{
+			"name": "Conversations (1:1 messaging)",
+			"item": [
+				{
+					"name": "Start/get thread",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"participant_id\":\"{{userId}}\"}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/conversations",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"conversations"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "List Thread",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/conversations",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"conversations"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "List messages",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/conversations/{{conversationId}}/messages?page=1&limit=50",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"conversations",
+								"{{conversationId}}",
+								"messages"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "50"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Send messages",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"content\":\"Hello\",\"attachments\":[]}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/conversations/{{conversationId}}/messages",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"conversations",
+								"{{conversationId}}",
+								"messages"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Mark read",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/conversations/{{conversationId}}/read",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"conversations",
+								"{{conversationId}}",
+								"read"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints for managing 1:1 conversations, including starting threads, sending messages, listing threads, and marking messages as read."
+		},
+		{
+			"name": "Webhooks (admin)",
+			"item": [
+				{
+					"name": "Create",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"name\": \"Media Ready\",\r\n    \"event_types\": [\r\n        \"media.ready\"\r\n    ],\r\n    \"target_url\": \"https://example.com/webhook\",\r\n    \"headers\": {\r\n        \"X-Signhex\": \"1\"\r\n    }\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/webhooks",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"webhooks"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "List",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/webhooks",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"webhooks"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Update",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"is_active\":false}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/webhooks/{{webhookId}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"webhooks",
+								"{{webhookId}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Delete",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/webhooks/{{webhookId}}",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"webhooks",
+								"{{webhookId}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Test fire",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/webhooks/{{webhookId}}/test",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"webhooks",
+								"{{webhookId}}",
+								"test"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Webhooks management endpoints for creating, updating, deleting, listing, and testing webhooks for event-driven integrations."
+		},
+		{
+			"name": "SSO config(admin)",
+			"item": [
+				{
+					"name": "Upsert",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"provider\":\"oidc\",\"issuer\":\"https://idp.example.com\",\"client_id\":\"cid\",\"client_secret\":\"secret\",\"authorization_url\":\"https://idp.example.com/auth\",\"token_url\":\"https://idp.example.com/token\",\"jwks_url\":\"https://idp.example.com/jwks\",\"redirect_uri\":\"https://app/callback\",\"scopes\":[\"openid\",\"profile\"],\"is_active\":true}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/sso-config",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"sso-config"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "List active",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/sso-config",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"sso-config"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Deactivate",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/sso-config/{{ssoConfigId}}/deactivate",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"sso-config",
+								"{{ssoConfigId}}",
+								"deactivate"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints for configuring Single Sign-On (SSO) settings, including upserting, listing, and deactivating SSO configurations."
+		},
+		{
+			"name": "Settings (admin)",
+			"item": [
+				{
+					"name": "List",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/settings",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"settings"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Upsert",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"key\":\"branding\",\"value\":{\"logo_url\":\"https://cdn/logo.png\",\"theme\":\"light\",\"timezone\":\"UTC\",\"notifications\":{\"email\":true}}}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/settings",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"settings"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Settings management endpoints for retrieving and upserting application-wide configuration settings."
+		},
+		{
+			"name": "Metrics & Reports",
+			"item": [
+				{
+					"name": "Dashboard Overview",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/metrics/overview",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"metrics",
+								"overview"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Reports Summary",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/reports/summary",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"reports",
+								"summary"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Reports trends",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/reports/trends",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"reports",
+								"trends"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints for retrieving metrics and reports, including dashboard overviews, summary reports, and trend analytics."
+		},
+		{
+			"name": "API Keys (admin)",
+			"item": [
+				{
+					"name": "Create",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"name\":\"CI Key\",\"scopes\":[\"read\",\"write\"],\"roles\":[\"ADMIN\"],\"expires_at\":null}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseURL}}/v1/api-keys",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"api-keys"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "List",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/api-keys",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"api-keys"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Rotate",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/v1/api-keys/{{apiKeyId}}/rotate",
+							"host": [
+								"{{baseURL}}"
+							],
+							"path": [
+								"v1",
+								"api-keys",
+								"{{apiKeyId}}",
+								"rotate"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "API key management endpoints for creating, listing, and rotating API keys for secure programmatic access."
+		},
+		{
+			"name": "health",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseURL}}/health",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"health"
+					]
+				}
+			},
+			"response": []
+		}
+	],
+	"event": [
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"// Collection-level test script for comprehensive validation",
+					"// This script will run after every request in the collection",
+					"",
+					"// --- Status Code Validation ---",
+					"pm.test(\"Status code is 2xx or 3xx\", function () {",
+					"    pm.expect(pm.response.code).to.be.within(200, 399);",
+					"});",
+					"",
+					"// --- Content-Type Header Validation ---",
+					"pm.test(\"Content-Type is present and valid\", function () {",
+					"    pm.response.to.have.header(\"Content-Type\");",
+					"    const contentType = pm.response.headers.get(\"Content-Type\");",
+					"    pm.expect(contentType).to.match(/application\\/(json|xml|octet-stream|pdf|zip|x-www-form-urlencoded|vnd\\..+|text\\/plain)/i);",
+					"});",
+					"",
+					"// --- Response Structure Validation (JSON) ---",
+					"if (pm.response.headers.get(\"Content-Type\") && pm.response.headers.get(\"Content-Type\").includes(\"application/json\")) {",
+					"    pm.test(\"Response is valid JSON\", function () {",
+					"        pm.expect(function () { pm.response.json(); }).not.to.throw();",
+					"    });",
+					"    ",
+					"    // Example: Check for common keys in response body (customize per API)",
+					"    try {",
+					"        var jsonData = pm.response.json();",
+					"        if (Array.isArray(jsonData)) {",
+					"            pm.test(\"Response is an array\", function () {",
+					"                pm.expect(jsonData).to.be.an(\"array\");",
+					"            });",
+					"            if (jsonData.length > 0 && typeof jsonData[0] === \"object\") {",
+					"                pm.test(\"First element has keys\", function () {",
+					"                    pm.expect(Object.keys(jsonData[0]).length).to.be.above(0);",
+					"                });",
+					"            }",
+					"        } else if (typeof jsonData === \"object\" && jsonData !== null) {",
+					"            pm.test(\"Response is an object\", function () {",
+					"                pm.expect(jsonData).to.be.an(\"object\");",
+					"            });",
+					"            pm.test(\"Response has at least one key\", function () {",
+					"                pm.expect(Object.keys(jsonData).length).to.be.above(0);",
+					"            });",
+					"        }",
+					"    } catch (e) {",
+					"        // Ignore if not JSON",
+					"    }",
+					"}",
+					"",
+					"// --- Key Data Validations (customize for each endpoint as needed) ---",
+					"// Example: Validate presence of 'id', 'name', 'created_at' if present",
+					"try {",
+					"    var jsonData = pm.response.json();",
+					"    if (jsonData) {",
+					"        if (Array.isArray(jsonData) && jsonData.length > 0) {",
+					"            [\"id\", \"name\", \"created_at\"].forEach(function (key) {",
+					"                pm.test(`Each object in array has key: ${key} (if applicable)`, function () {",
+					"                    jsonData.forEach(function (item) {",
+					"                        if (typeof item === \"object\") {",
+					"                            pm.expect(item).to.have.any.keys(key);",
+					"                        }",
+					"                    });",
+					"                });",
+					"            });",
+					"        } else if (typeof jsonData === \"object\" && jsonData !== null) {",
+					"            [\"id\", \"name\", \"created_at\"].forEach(function (key) {",
+					"                pm.test(`Response object has key: ${key} (if applicable)`, function () {",
+					"                    pm.expect(jsonData).to.have.any.keys(key);",
+					"                });",
+					"            });",
+					"        }",
+					"    }",
+					"} catch (e) {",
+					"    // Ignore if not JSON",
+					"}",
+					"",
+					"// --- Error Response Validation ---",
+					"pm.test(\"Error responses have error message (if applicable)\", function () {",
+					"    if (pm.response.code >= 400) {",
+					"        try {",
+					"            var errorData = pm.response.json();",
+					"            pm.expect(errorData).to.satisfy(function (obj) {",
+					"                return obj && (obj.error || obj.message || obj.detail);",
+					"            });",
+					"        } catch (e) {",
+					"            pm.expect(pm.response.text().length).to.be.above(0);",
+					"        }",
+					"    }",
+					"});",
+					"",
+					"// --- Timing Validation ---",
+					"pm.test(\"Response time is less than 2 seconds\", function () {",
+					"    pm.expect(pm.response.responseTime).to.be.below(2000);",
+					"});",
+					"",
+					"// --- Add more endpoint-specific tests in individual requests as needed ---",
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "adminEmail",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "adminPassword",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "authToken",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "deptId",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "page",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "limit",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "true|false",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "role",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "IMAGE|VIDEO|DOCUMENT",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "PENDING|PROCESSING|READY|FAILED",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "mediaId",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "scheduleId",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "screenId",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "ACTIVE|INACTIVE|OFFLINE",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "type",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "action",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "iso",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "auditLogId",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "OPEN|IN_PROGRESS|CLOSED",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "requestId",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "emergencyId",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "deviceId",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "commandId",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "userid",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "inviteToken",
+			"value": "",
+			"type": "default"
+		}
+	]
+}

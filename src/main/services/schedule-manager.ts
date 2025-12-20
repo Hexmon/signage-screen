@@ -21,6 +21,8 @@ export class ScheduleManager extends EventEmitter {
   private pollInterval?: NodeJS.Timeout
   private isPolling = false
   private prefetchInProgress = false
+  private scheduleApiSupported = true
+  private emergencyApiSupported = true
 
   constructor() {
     super()
@@ -71,6 +73,15 @@ export class ScheduleManager extends EventEmitter {
    * Fetch schedule from backend
    */
   async fetchSchedule(): Promise<ScheduleSnapshot> {
+    if (!this.scheduleApiSupported) {
+      logger.debug('Schedule API marked unsupported; skipping fetch')
+      return this.currentSchedule || {
+        id: 'unsupported',
+        version: 0,
+        items: [],
+      }
+    }
+
     const pairingService = getPairingService()
     const deviceId = pairingService.getDeviceId()
 
@@ -115,7 +126,19 @@ export class ScheduleManager extends EventEmitter {
       await this.prefetchScheduleItems(schedule)
 
       return schedule
-    } catch (error) {
+    } catch (error: any) {
+      const status = error?.response?.status
+      if (status === 404 || status === 501) {
+        this.scheduleApiSupported = false
+        logger.warn('Schedule endpoint not available; disabling schedule polling')
+        this.stop()
+        return {
+          id: 'unsupported',
+          version: 0,
+          items: [],
+        }
+      }
+
       logger.error({ error, deviceId }, 'Failed to fetch schedule')
       throw error
     }
@@ -201,23 +224,8 @@ export class ScheduleManager extends EventEmitter {
     logger.info({ scheduleId: schedule.id, itemCount: schedule.items.length }, 'Starting prefetch')
 
     try {
-      const cacheManager = getCacheManager()
-      const itemsToPrefetch = schedule.items
-        .filter((item) => item.objectKey) // Only prefetch items with objectKey (not URLs)
-        .map((item) => ({
-          objectKey: item.objectKey!,
-          url: this.getMediaUrl(item.objectKey!),
-          sha256: item.sha256,
-        }))
-
-      if (itemsToPrefetch.length === 0) {
-        logger.info('No items to prefetch')
-        return
-      }
-
-      await cacheManager.prefetch(itemsToPrefetch)
-
-      logger.info({ prefetchedCount: itemsToPrefetch.length }, 'Prefetch completed')
+      // Backend currently lacks media download endpoint for objectKey; skip to avoid 404s.
+      logger.info('Prefetch skipped: media endpoint unsupported in current backend')
     } catch (error) {
       logger.error({ error }, 'Prefetch failed')
     } finally {
@@ -246,6 +254,10 @@ export class ScheduleManager extends EventEmitter {
       return null
     }
 
+    if (!this.emergencyApiSupported) {
+      return null
+    }
+
     try {
       const httpClient = getHttpClient()
       const override = await httpClient.get<EmergencyOverride>(`/v1/device/${deviceId}/emergency`)
@@ -265,7 +277,13 @@ export class ScheduleManager extends EventEmitter {
       }
 
       return null
-    } catch (error) {
+    } catch (error: any) {
+      const status = error?.response?.status
+      if (status === 404 || status === 501) {
+        this.emergencyApiSupported = false
+        logger.warn('Emergency endpoint not available; disabling emergency checks')
+        return null
+      }
       logger.error({ error }, 'Failed to check emergency override')
       return null
     }
@@ -350,4 +368,3 @@ export function getScheduleManager(): ScheduleManager {
   }
   return scheduleManager
 }
-

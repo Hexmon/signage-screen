@@ -28,6 +28,7 @@ export class LogShipper {
   private bundleDir: string
   private shipInterval?: NodeJS.Timeout
   private isShipping = false
+  private presignUnsupported = false
 
   constructor() {
     const config = getConfigManager().getConfig()
@@ -90,6 +91,11 @@ export class LogShipper {
       }
     }
 
+    if (this.presignUnsupported) {
+      logger.warn('Log shipping disabled: presign endpoint unavailable')
+      return { success: false, error: 'Presign unsupported' }
+    }
+
     const pairingService = getPairingService()
     const deviceId = pairingService.getDeviceId()
 
@@ -128,8 +134,14 @@ export class LogShipper {
         bundleId: path.basename(bundlePath),
         uploadUrl,
       }
-    } catch (error) {
-      logger.error({ error }, 'Log shipment failed')
+    } catch (error: any) {
+      const status = error?.response?.status
+      if (status === 404 || status === 501) {
+        this.presignUnsupported = true
+        logger.warn('Disabling log shipping; presign endpoint not available on backend')
+      } else {
+        logger.error({ error }, 'Log shipment failed')
+      }
       return {
         success: false,
         error: (error as Error).message,
@@ -348,4 +360,3 @@ export function getLogShipper(): LogShipper {
   }
   return logShipper
 }
-
