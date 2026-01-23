@@ -53,6 +53,8 @@ certs/
 cache/
 .cache/
 *.cache
+!src/main/services/cache/
+!src/main/services/cache/**
 
 # Temporary files
 tmp/
@@ -65,4 +67,3 @@ Thumbs.db
 
 # Electron
 electron-builder.yml
-
