@@ -104,15 +104,27 @@ export class PlayerFlow extends EventEmitter {
     }
 
     this.transitionState('CERT_ISSUED')
+    try {
+      const response = await pairingService.submitPairing(code)
 
-    const response = await pairingService.submitPairing(code)
+      this.updateStatus({
+        deviceId: response.device_id || pairingService.getDeviceId(),
+      })
 
-    this.updateStatus({
-      deviceId: response.device_id || pairingService.getDeviceId(),
-    })
-
-    await this.startPlaybackLoop()
-    return response
+      await this.startPlaybackLoop()
+      return response
+    } catch (error) {
+      const status = (error as any)?.status
+      if (status === 404) {
+        this.transitionState('NEED_PAIRING')
+        const newCode = await pairingService.requestPairingCode()
+        this.updateStatus({
+          deviceId: newCode.device_id || pairingService.getDeviceId(),
+        })
+        return newCode
+      }
+      throw error
+    }
   }
 
   async refreshSnapshot(): Promise<void> {

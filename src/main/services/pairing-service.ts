@@ -123,6 +123,14 @@ export class PairingService {
       logger.info({ deviceId: response.device_id }, 'Pairing completed successfully')
       return response
     } catch (error) {
+      const status = (error as any)?.response?.status
+      if (status === 404) {
+        logger.warn({ pairingCode }, 'Pairing code not found or expired')
+        const notFound = new Error('PAIRING_CODE_NOT_FOUND')
+        ;(notFound as any).status = 404
+        throw notFound
+      }
+
       logger.error({ error, pairingCode }, 'Pairing failed')
       throw error
     }

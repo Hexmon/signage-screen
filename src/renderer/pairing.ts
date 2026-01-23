@@ -207,7 +207,13 @@ class PairingScreen {
     this.showStatus('Completing pairing, requesting certificate...', '')
 
     try {
-      await window.hexmon.completePairing()
+      const response = await window.hexmon.completePairing()
+      if (response && typeof response === 'object' && 'pairing_code' in response) {
+        this.applyPairingResponse(response as any)
+        this.showStatus('Pairing code expired. New code generated.', 'error')
+        this.enableCompleteButton(false)
+        return
+      }
       this.showStatus('Certificate issued. Starting playback...', 'success')
       this.hidePairingScreen()
     } catch (error) {

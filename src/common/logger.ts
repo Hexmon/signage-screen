@@ -16,7 +16,7 @@ const PII_PATTERNS = [
   /\b(?:\d{1,3}\.){3}\d{1,3}\b/g, // IP addresses (optional, may want to keep for diagnostics)
 ]
 
-function redactPII(obj: unknown): unknown {
+function redactPII(obj: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
   if (typeof obj === 'string') {
     let redacted = obj
     for (const pattern of PII_PATTERNS) {
@@ -25,18 +25,34 @@ function redactPII(obj: unknown): unknown {
     return redacted
   }
 
+  if (Buffer.isBuffer(obj)) {
+    return `[Buffer length=${obj.length}]`
+  }
+
+  if (obj instanceof Date) {
+    return obj.toISOString()
+  }
+
   if (Array.isArray(obj)) {
-    return obj.map(redactPII)
+    if (seen.has(obj)) {
+      return '[Circular]'
+    }
+    seen.add(obj)
+    return obj.map((item) => redactPII(item, seen))
   }
 
   if (obj && typeof obj === 'object') {
+    if (seen.has(obj)) {
+      return '[Circular]'
+    }
+    seen.add(obj)
     const redacted: Record<string, unknown> = {}
     for (const [key, value] of Object.entries(obj)) {
       // Redact sensitive keys
       if (['password', 'secret', 'token', 'apiKey', 'accessKey', 'secretKey'].includes(key)) {
         redacted[key] = '[REDACTED]'
       } else {
-        redacted[key] = redactPII(value)
+        redacted[key] = redactPII(value, seen)
       }
     }
     return redacted
@@ -262,4 +278,3 @@ export function destroyAllLoggers(): void {
   }
   loggers.clear()
 }
-

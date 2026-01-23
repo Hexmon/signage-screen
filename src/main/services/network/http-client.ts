@@ -223,7 +223,7 @@ export class HttpClient {
    */
   async checkConnectivity(): Promise<boolean> {
     try {
-      await this.head('/health')
+      await this.head('/api/v1/health')
       return true
     } catch (error) {
       logger.warn('Connectivity check failed')
