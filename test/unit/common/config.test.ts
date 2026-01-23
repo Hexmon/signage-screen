@@ -6,7 +6,7 @@ import { expect } from 'chai'
 import * as sinon from 'sinon'
 import * as fs from 'fs'
 import * as path from 'path'
-import { createTempDir, cleanupTempDir } from '../../helpers/test-utils'
+import { createTempDir, cleanupTempDir } from '../../helpers/test-utils.ts'
 
 describe('Config Manager', () => {
   let tempDir: string
@@ -130,9 +130,8 @@ describe('Config Manager', () => {
     })
   })
 
-  describe('Environment Variable Override', () => {
-    it('should override config with environment variables', () => {
-      process.env.HEXMON_API_BASE = 'https://override.hexmon.com'
+  describe('Environment Variable Overrides', () => {
+    it('should override non-URL fields with environment variables', () => {
       process.env.HEXMON_DEVICE_ID = 'override-device'
 
       delete require.cache[require.resolve('../../../src/common/config')]
@@ -141,10 +140,8 @@ describe('Config Manager', () => {
       const configManager = getConfigManager()
       const config = configManager.getConfig()
 
-      expect(config.apiBase).to.equal('https://override.hexmon.com')
       expect(config.deviceId).to.equal('override-device')
 
-      delete process.env.HEXMON_API_BASE
       delete process.env.HEXMON_DEVICE_ID
     })
   })

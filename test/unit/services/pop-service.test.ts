@@ -6,7 +6,7 @@ import { expect } from 'chai'
 import * as sinon from 'sinon'
 import * as fs from 'fs'
 import * as path from 'path'
-import { createTempDir, cleanupTempDir, sleep } from '../../helpers/test-utils'
+import { createTempDir, cleanupTempDir, sleep } from '../../helpers/test-utils.ts'
 
 describe('Proof-of-Play Service', () => {
   let tempDir: string

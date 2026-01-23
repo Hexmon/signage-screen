@@ -5,7 +5,7 @@
 
 import { expect } from 'chai'
 import * as sinon from 'sinon'
-import { sleep, waitFor } from '../helpers/test-utils'
+import { sleep, waitFor } from '../helpers/test-utils.ts'
 
 describe('Network Failure Fault Injection', () => {
   let sandbox: sinon.SinonSandbox

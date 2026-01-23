@@ -6,7 +6,7 @@ import { expect } from 'chai'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as sinon from 'sinon'
-import { createTempDir, cleanupTempDir } from '../../helpers/test-utils'
+import { createTempDir, cleanupTempDir } from '../../helpers/test-utils.ts'
 
 describe('Snapshot Manager', () => {
   let tempDir: string

@@ -6,7 +6,7 @@ import { expect } from 'chai'
 import * as sinon from 'sinon'
 import * as fs from 'fs'
 import * as path from 'path'
-import { createTempDir, cleanupTempDir, createTestFile, calculateHash } from '../../helpers/test-utils'
+import { createTempDir, cleanupTempDir, createTestFile, calculateHash } from '../../helpers/test-utils.ts'
 
 // Import functions to test
 import {
@@ -16,7 +16,7 @@ import {
   retryWithBackoff,
   sanitizePath,
   parseTimeString,
-} from '../../../src/common/utils'
+} from '../../../src/common/utils.ts'
 
 describe('Common Utils', () => {
   let tempDir: string

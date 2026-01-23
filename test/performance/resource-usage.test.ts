@@ -5,7 +5,7 @@
 
 import { expect } from 'chai'
 import * as os from 'os'
-import { sleep } from '../helpers/test-utils'
+import { sleep } from '../helpers/test-utils.ts'
 
 describe('Resource Usage Performance', () => {
   /**

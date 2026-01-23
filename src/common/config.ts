@@ -21,9 +21,9 @@ const DEFAULT_KEY_PATH = process.env['HEXMON_MTLS_KEY_PATH'] || path.join(DEFAUL
 const DEFAULT_CA_PATH = process.env['HEXMON_MTLS_CA_PATH'] || path.join(DEFAULT_CERT_DIR, 'ca.crt')
 
 const DEFAULT_CONFIG: AppConfig = {
-  apiBase:
-    process.env['HEXMON_API_BASE'] || (isDevelopment ? 'http://localhost:3000' : 'https://api.hexmon.local'),
-  wsUrl: process.env['HEXMON_WS_URL'] || (isDevelopment ? 'ws://localhost:3000/ws' : 'wss://api.hexmon.local/ws'),
+  // Single source of truth for backend URLs is config.json.
+  apiBase: isDevelopment ? 'http://192.168.0.3:3000' : 'https://api.hexmon.local',
+  wsUrl: isDevelopment ? 'ws://192.168.0.3:3000/ws' : 'wss://api.hexmon.local/ws',
   deviceId: process.env['HEXMON_DEVICE_ID'] || '',
   mtls: {
     enabled: process.env['HEXMON_MTLS_ENABLED'] === 'true',

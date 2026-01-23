@@ -4,7 +4,7 @@
  */
 
 import { expect } from 'chai'
-import { createMockSchedule, sleep } from '../helpers/test-utils'
+import { createMockSchedule, sleep } from '../helpers/test-utils.ts'
 
 describe('Timeline Jitter Performance', () => {
   describe('Timeline Scheduler', () => {

@@ -3,7 +3,7 @@
  */
 
 import { expect } from 'chai'
-import { parseSnapshotResponse } from '../../../src/main/services/snapshot-parser'
+import { parseSnapshotResponse } from '../../../src/main/services/snapshot-parser.ts'
 
 describe('Snapshot Parser', () => {
   it('should parse published snapshot with media URLs', () => {

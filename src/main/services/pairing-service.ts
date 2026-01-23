@@ -198,8 +198,6 @@ export class PairingService {
       // Update configuration
       config.updateConfig({
         deviceId: response.device_id,
-        apiBase: response.api_base || currentConfig.apiBase,
-        wsUrl: response.ws_url || currentConfig.wsUrl,
         mtls: {
           ...currentConfig.mtls,
           enabled: hasCertificates ? true : currentConfig.mtls.enabled,
@@ -211,10 +209,6 @@ export class PairingService {
       this.isPaired = true
 
       const httpClient = getHttpClient()
-      if (response.api_base) {
-        httpClient.setBaseURL(response.api_base)
-      }
-
       // Enable mTLS on clients when certificates are provided
       if (hasCertificates) {
         httpClient.enableMTLS()
