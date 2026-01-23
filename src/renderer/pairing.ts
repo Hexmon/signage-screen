@@ -24,6 +24,8 @@ class PairingScreen {
   private expiresAt?: number
   private requestingCode = false
   private completingPairing = false
+  private autoCompleteBlocked = false
+  private playerState: PlayerStatus['state'] | null = null
 
   constructor() {
     this.initializeElements()
@@ -85,6 +87,7 @@ class PairingScreen {
     if (window.hexmon?.onPlayerStatus) {
       window.hexmon.onPlayerStatus((data: any) => {
         const status = data as PlayerStatus
+        this.playerState = status.state
         if (status.state === 'PLAYBACK_RUNNING' || status.state === 'OFFLINE_FALLBACK') {
           this.hidePairingScreen()
         } else if (status.state === 'NEED_PAIRING' || status.state === 'PAIRING_REQUESTED' || status.state === 'WAITING_CONFIRMATION') {
@@ -123,9 +126,14 @@ class PairingScreen {
     try {
       const status = await window.hexmon.getPairingStatus()
 
+      if (!status.paired) {
+        this.autoCompleteBlocked = false
+      }
+
       if (status.paired) {
         this.enableCompleteButton(true)
-        if (!this.completingPairing) {
+        const allowAutoComplete = this.playerState === 'WAITING_CONFIRMATION' && !this.autoCompleteBlocked
+        if (allowAutoComplete && !this.completingPairing) {
           this.completePairing().catch((error) => {
             console.error('[Pairing] Auto-complete failed:', error)
           })
@@ -167,6 +175,7 @@ class PairingScreen {
       const payload = this.buildPairingRequestPayload()
       const response = await window.hexmon.requestPairingCode(payload)
       this.applyPairingResponse(response)
+      this.autoCompleteBlocked = false
       this.showStatus('Enter this code in your CMS to connect.', '')
       this.enableCompleteButton(false)
     } catch (error) {
@@ -210,6 +219,7 @@ class PairingScreen {
       const response = await window.hexmon.completePairing()
       if (response && typeof response === 'object' && 'pairing_code' in response) {
         this.applyPairingResponse(response as any)
+        this.autoCompleteBlocked = true
         this.showStatus('Pairing code expired. New code generated.', 'error')
         this.enableCompleteButton(false)
         return
@@ -218,6 +228,9 @@ class PairingScreen {
       this.hidePairingScreen()
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to complete pairing'
+      if (errorMessage.includes('PAIRING_CODE_NOT_FOUND') || errorMessage.includes('Invalid or expired')) {
+        this.autoCompleteBlocked = true
+      }
       this.showStatus(errorMessage, 'error')
       this.enableCompleteButton(true)
     } finally {

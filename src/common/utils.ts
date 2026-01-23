@@ -100,6 +100,7 @@ export async function retryWithBackoff<T>(
     baseDelayMs?: number
     maxDelayMs?: number
     onRetry?: (attempt: number, error: Error) => void
+    shouldRetry?: (attempt: number, error: Error) => boolean
   } = {}
 ): Promise<T> {
   const backoff = new ExponentialBackoff(
@@ -115,6 +116,10 @@ export async function retryWithBackoff<T>(
       return await fn()
     } catch (error) {
       lastError = error as Error
+      const attempt = backoff.getAttempt() + 1
+      if (options.shouldRetry && !options.shouldRetry(attempt, lastError)) {
+        throw lastError
+      }
       const delay = backoff.getDelay()
 
       if (options.onRetry) {
@@ -336,4 +341,3 @@ export function isWithinSchedule(onTime: string, offTime: string): boolean {
     return currentMinutes >= onMinutes || currentMinutes < offMinutes
   }
 }
-

@@ -16,7 +16,11 @@ const PII_PATTERNS = [
   /\b(?:\d{1,3}\.){3}\d{1,3}\b/g, // IP addresses (optional, may want to keep for diagnostics)
 ]
 
-function redactPII(obj: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
+function redactPII(obj: unknown, seen: WeakSet<object> = new WeakSet(), depth: number = 0): unknown {
+  if (depth > 6) {
+    return '[MaxDepth]'
+  }
+
   if (typeof obj === 'string') {
     let redacted = obj
     for (const pattern of PII_PATTERNS) {
@@ -33,12 +37,20 @@ function redactPII(obj: unknown, seen: WeakSet<object> = new WeakSet()): unknown
     return obj.toISOString()
   }
 
+  if (obj instanceof Error) {
+    return {
+      name: obj.name,
+      message: obj.message,
+      stack: obj.stack,
+    }
+  }
+
   if (Array.isArray(obj)) {
     if (seen.has(obj)) {
       return '[Circular]'
     }
     seen.add(obj)
-    return obj.map((item) => redactPII(item, seen))
+    return obj.map((item) => redactPII(item, seen, depth + 1))
   }
 
   if (obj && typeof obj === 'object') {
@@ -52,13 +64,24 @@ function redactPII(obj: unknown, seen: WeakSet<object> = new WeakSet()): unknown
       if (['password', 'secret', 'token', 'apiKey', 'accessKey', 'secretKey'].includes(key)) {
         redacted[key] = '[REDACTED]'
       } else {
-        redacted[key] = redactPII(value, seen)
+        redacted[key] = redactPII(value, seen, depth + 1)
       }
     }
     return redacted
   }
 
   return obj
+}
+
+function safeRedact(obj: unknown): unknown {
+  try {
+    return redactPII(obj)
+  } catch (error) {
+    return {
+      error: 'RedactionFailed',
+      message: error instanceof Error ? error.message : 'Unknown error',
+    }
+  }
 }
 
 export class Logger {
@@ -186,7 +209,7 @@ export class Logger {
     if (typeof objOrMsg === 'string') {
       this.logger.trace(objOrMsg)
     } else {
-      this.logger.trace(redactPII(objOrMsg), msg)
+      this.logger.trace(safeRedact(objOrMsg), msg)
     }
   }
 
@@ -196,7 +219,7 @@ export class Logger {
     if (typeof objOrMsg === 'string') {
       this.logger.debug(objOrMsg)
     } else {
-      this.logger.debug(redactPII(objOrMsg), msg)
+      this.logger.debug(safeRedact(objOrMsg), msg)
     }
   }
 
@@ -206,7 +229,7 @@ export class Logger {
     if (typeof objOrMsg === 'string') {
       this.logger.info(objOrMsg)
     } else {
-      this.logger.info(redactPII(objOrMsg), msg)
+      this.logger.info(safeRedact(objOrMsg), msg)
     }
   }
 
@@ -216,7 +239,7 @@ export class Logger {
     if (typeof objOrMsg === 'string') {
       this.logger.warn(objOrMsg)
     } else {
-      this.logger.warn(redactPII(objOrMsg), msg)
+      this.logger.warn(safeRedact(objOrMsg), msg)
     }
   }
 
@@ -226,7 +249,7 @@ export class Logger {
     if (typeof objOrMsg === 'string') {
       this.logger.error(objOrMsg)
     } else {
-      this.logger.error(redactPII(objOrMsg), msg)
+      this.logger.error(safeRedact(objOrMsg), msg)
     }
   }
 
@@ -236,13 +259,13 @@ export class Logger {
     if (typeof objOrMsg === 'string') {
       this.logger.fatal(objOrMsg)
     } else {
-      this.logger.fatal(redactPII(objOrMsg), msg)
+      this.logger.fatal(safeRedact(objOrMsg), msg)
     }
   }
 
   public child(bindings: object): Logger {
     const childLogger = new Logger(this.logger.bindings()['name'] as string, this.logDir)
-    childLogger.logger = this.logger.child(redactPII(bindings) as pino.Bindings)
+    childLogger.logger = this.logger.child(safeRedact(bindings) as pino.Bindings)
     return childLogger
   }
 

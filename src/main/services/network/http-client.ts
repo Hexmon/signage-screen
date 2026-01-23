@@ -111,6 +111,20 @@ export class HttpClient {
     return false
   }
 
+  private isRetryableError(error: any): boolean {
+    const status = error?.response?.status
+    if (!status) {
+      return true
+    }
+    if (status === 408 || status === 429) {
+      return true
+    }
+    if (status >= 500) {
+      return true
+    }
+    return false
+  }
+
   /**
    * Create HTTPS agent with mTLS certificates
    */
@@ -147,6 +161,7 @@ export class HttpClient {
         onRetry: (attempt, error) => {
           logger.warn({ url, attempt, error: error.message }, 'Retrying GET request')
         },
+        shouldRetry: (_attempt, error) => this.isRetryableError(error),
       }
     )
   }
@@ -167,6 +182,7 @@ export class HttpClient {
         onRetry: (attempt, error) => {
           logger.warn({ url, attempt, error: error.message }, 'Retrying POST request')
         },
+        shouldRetry: (_attempt, error) => this.isRetryableError(error),
       }
     )
   }
@@ -187,6 +203,7 @@ export class HttpClient {
         onRetry: (attempt, error) => {
           logger.warn({ url, attempt, error: error.message }, 'Retrying PUT request')
         },
+        shouldRetry: (_attempt, error) => this.isRetryableError(error),
       }
     )
   }
@@ -207,6 +224,7 @@ export class HttpClient {
         onRetry: (attempt, error) => {
           logger.warn({ url, attempt, error: error.message }, 'Retrying DELETE request')
         },
+        shouldRetry: (_attempt, error) => this.isRetryableError(error),
       }
     )
   }
