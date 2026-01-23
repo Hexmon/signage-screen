@@ -6,6 +6,7 @@
 import * as crypto from 'crypto'
 import * as fs from 'fs'
 import * as path from 'path'
+import forge from 'node-forge'
 import { getLogger } from '../../common/logger'
 import { getConfigManager } from '../../common/config'
 import { atomicWrite, ensureDir } from '../../common/utils'
@@ -22,11 +23,30 @@ export interface CertificateInfo {
   fingerprint: string
 }
 
+export interface CertificateMetadata {
+  fingerprint: string
+  validFrom: string
+  validTo: string
+  subject: string
+  issuer: string
+  serialNumber: string
+}
+
+export interface CSRSubjectOverrides {
+  commonName?: string
+  organization?: string
+  organizationalUnit?: string
+  country?: string
+  state?: string
+  locality?: string
+}
+
 export class CertificateManager {
   private certPath: string
   private keyPath: string
   private caPath: string
   private csrPath: string
+  private metadataPath: string
 
   constructor() {
     const config = getConfigManager().getConfig()
@@ -34,6 +54,7 @@ export class CertificateManager {
     this.keyPath = config.mtls.keyPath
     this.caPath = config.mtls.caPath
     this.csrPath = path.join(path.dirname(this.keyPath), 'client.csr')
+    this.metadataPath = path.join(path.dirname(this.keyPath), 'cert-meta.json')
 
     // Ensure certificate directory exists with secure permissions
     const certDir = path.dirname(this.certPath)
@@ -41,16 +62,16 @@ export class CertificateManager {
   }
 
   /**
-   * Generate ECDSA P-256 key pair
+   * Generate RSA 2048 key pair
    */
   async generateKeyPair(): Promise<{ privateKey: string; publicKey: string }> {
-    logger.info('Generating ECDSA P-256 key pair')
+    logger.info('Generating RSA 2048 key pair')
 
     return new Promise((resolve, reject) => {
       crypto.generateKeyPair(
-        'ec',
+        'rsa',
         {
-          namedCurve: 'prime256v1', // P-256
+          modulusLength: 2048,
           publicKeyEncoding: {
             type: 'spki',
             format: 'pem',
@@ -76,7 +97,7 @@ export class CertificateManager {
   /**
    * Generate Certificate Signing Request (CSR)
    */
-  async generateCSR(deviceInfo: DeviceInfo): Promise<string> {
+  async generateCSR(deviceInfo: DeviceInfo, overrides: CSRSubjectOverrides = {}): Promise<string> {
     logger.info({ deviceId: deviceInfo.deviceId }, 'Generating CSR')
 
     try {
@@ -95,10 +116,13 @@ export class CertificateManager {
         logger.info({ keyPath: this.keyPath }, 'Private key stored securely')
       }
 
-      // Create CSR using openssl-like approach
-      // Note: Node.js doesn't have built-in CSR generation, so we use a workaround
-      // In production, you might want to use a library like 'node-forge' or call openssl
-      const csr = this.createCSRManually(privateKey, deviceInfo)
+      // Derive public key from private key
+      const publicKeyPem = crypto
+        .createPublicKey(crypto.createPrivateKey(privateKey))
+        .export({ type: 'spki', format: 'pem' })
+        .toString()
+
+      const csr = this.createCSR(privateKey, publicKeyPem, deviceInfo, overrides)
 
       // Store CSR
       await atomicWrite(this.csrPath, csr)
@@ -112,22 +136,44 @@ export class CertificateManager {
   }
 
   /**
-   * Create CSR manually (simplified version)
-   * In production, use node-forge or similar library
+   * Create CSR using node-forge
    */
-  private createCSRManually(_privateKey: string, deviceInfo: DeviceInfo): string {
-    // This is a simplified placeholder
-    // In production, use node-forge or call openssl subprocess
-    const subject = `/CN=${deviceInfo.deviceId}/O=HexmonSignage/C=US`
-    const csrTemplate = `-----BEGIN CERTIFICATE REQUEST-----
-[CSR_DATA_PLACEHOLDER]
-Subject: ${subject}
-Device: ${deviceInfo.hostname}
-Platform: ${deviceInfo.platform}
------END CERTIFICATE REQUEST-----`
+  private createCSR(
+    privateKeyPem: string,
+    publicKeyPem: string,
+    deviceInfo: DeviceInfo,
+    overrides: CSRSubjectOverrides
+  ): string {
+    const privateKey = forge.pki.privateKeyFromPem(privateKeyPem)
+    const publicKey = forge.pki.publicKeyFromPem(publicKeyPem)
 
-    logger.warn('Using simplified CSR generation. Use node-forge in production.')
-    return csrTemplate
+    const csr = forge.pki.createCertificationRequest()
+    csr.publicKey = publicKey
+
+    const subject = [
+      { name: 'commonName', value: overrides.commonName || deviceInfo.deviceId || deviceInfo.hostname || 'hexmon-device' },
+      { name: 'organizationName', value: overrides.organization || 'HexmonSignage' },
+      { name: 'countryName', value: overrides.country || 'US' },
+    ]
+
+    if (overrides.organizationalUnit) {
+      subject.push({ name: 'organizationalUnitName', value: overrides.organizationalUnit })
+    }
+    if (overrides.state) {
+      subject.push({ name: 'stateOrProvinceName', value: overrides.state })
+    }
+    if (overrides.locality) {
+      subject.push({ name: 'localityName', value: overrides.locality })
+    }
+
+    csr.setSubject(subject)
+    csr.sign(privateKey, forge.md.sha256.create())
+
+    if (!csr.verify()) {
+      throw new Error('CSR verification failed')
+    }
+
+    return forge.pki.certificationRequestToPem(csr)
   }
 
   /**
@@ -152,6 +198,9 @@ Platform: ${deviceInfo.platform}
       if (!isValid) {
         throw new Error('Certificate verification failed')
       }
+
+      // Persist certificate metadata
+      await this.persistMetadata()
 
       logger.info('Certificates stored and verified successfully')
     } catch (error) {
@@ -224,6 +273,42 @@ Platform: ${deviceInfo.platform}
   }
 
   /**
+   * Load persisted certificate metadata
+   */
+  getCertificateMetadata(): CertificateMetadata | null {
+    if (!fs.existsSync(this.metadataPath)) {
+      return null
+    }
+
+    try {
+      const data = fs.readFileSync(this.metadataPath, 'utf-8')
+      return JSON.parse(data) as CertificateMetadata
+    } catch (error) {
+      logger.error({ error }, 'Failed to read certificate metadata')
+      return null
+    }
+  }
+
+  private async persistMetadata(): Promise<void> {
+    const info = await this.getCertificateInfo()
+    if (!info) {
+      return
+    }
+
+    const metadata: CertificateMetadata = {
+      fingerprint: info.fingerprint,
+      validFrom: info.validFrom.toISOString(),
+      validTo: info.validTo.toISOString(),
+      subject: info.subject,
+      issuer: info.issuer,
+      serialNumber: info.serialNumber,
+    }
+
+    await atomicWrite(this.metadataPath, JSON.stringify(metadata, null, 2))
+    fs.chmodSync(this.metadataPath, 0o600)
+  }
+
+  /**
    * Check certificate expiry and determine if renewal is needed
    */
   async needsRenewal(): Promise<boolean> {
@@ -283,7 +368,7 @@ Platform: ${deviceInfo.platform}
   async deleteCertificates(): Promise<void> {
     logger.warn('Deleting certificates')
 
-    const files = [this.certPath, this.keyPath, this.caPath, this.csrPath]
+    const files = [this.certPath, this.keyPath, this.caPath, this.csrPath, this.metadataPath]
 
     for (const file of files) {
       if (fs.existsSync(file)) {
@@ -314,4 +399,3 @@ export function getCertificateManager(): CertificateManager {
   }
   return certManager
 }
-

@@ -6,12 +6,12 @@
 import { BrowserWindow } from 'electron'
 import { EventEmitter } from 'events'
 import { getLogger } from '../../../common/logger'
-import { TimelineItem, EmergencyOverride, PlaybackError } from '../../../common/types'
-import { getScheduleManager } from '../schedule-manager'
+import { PlaybackError, TimelineItem } from '../../../common/types'
 import { getCacheManager } from '../cache/cache-manager'
 import { getProofOfPlayService } from '../pop-service'
 import { getTelemetryService } from '../telemetry/telemetry-service'
 import { TimelineScheduler, ScheduledItem } from './timeline-scheduler'
+import { getSnapshotManager, PlaybackPlaylist } from '../snapshot-manager'
 
 const logger = getLogger('playback-engine')
 
@@ -22,7 +22,7 @@ export class PlaybackEngine extends EventEmitter {
   private scheduler: TimelineScheduler
   private mainWindow?: BrowserWindow
   private currentItem?: TimelineItem
-  private emergencyOverride?: EmergencyOverride
+  private currentScheduleId?: string
   private errorCount = 0
   private maxErrors = 5
 
@@ -30,7 +30,7 @@ export class PlaybackEngine extends EventEmitter {
     super()
     this.scheduler = new TimelineScheduler()
     this.setupSchedulerListeners()
-    this.setupScheduleManagerListeners()
+    this.setupSnapshotManagerListeners()
   }
 
   /**
@@ -53,27 +53,17 @@ export class PlaybackEngine extends EventEmitter {
     logger.info('Starting playback')
 
     try {
-      // Get current schedule
-      const scheduleManager = getScheduleManager()
-      const schedule = scheduleManager.getCurrentSchedule()
+      const snapshotManager = getSnapshotManager()
+      const playlist = snapshotManager.getCurrentPlaylist()
 
-      if (!schedule || schedule.items.length === 0) {
-        throw new Error('No schedule available')
+      if (!playlist || playlist.items.length === 0) {
+        throw new Error('No playlist available')
       }
 
-      // Check for emergency override
-      const emergency = scheduleManager.getEmergencyOverride()
-      if (emergency && emergency.active) {
-        await this.handleEmergencyOverride(emergency)
-        return
-      }
-
-      // Start timeline
-      this.state = 'playing'
-      this.scheduler.start(schedule.items)
+      await this.startPlaylist(playlist)
 
       this.emit('playback-started')
-      logger.info({ scheduleId: schedule.id, itemCount: schedule.items.length }, 'Playback started')
+      logger.info({ scheduleId: playlist.scheduleId, itemCount: playlist.items.length }, 'Playback started')
     } catch (error) {
       logger.error({ error }, 'Failed to start playback')
       this.state = 'error'
@@ -130,41 +120,21 @@ export class PlaybackEngine extends EventEmitter {
   /**
    * Handle emergency override
    */
-  private async handleEmergencyOverride(override: EmergencyOverride): Promise<void> {
-    logger.warn({ overrideId: override.id }, 'Handling emergency override')
-
-    this.emergencyOverride = override
-    this.state = 'emergency'
-
-    // Stop current playback
+  private async startPlaylist(playlist: PlaybackPlaylist): Promise<void> {
+    this.currentScheduleId = playlist.scheduleId || playlist.snapshotId
     this.scheduler.stop()
 
-    // Play emergency content
-    const emergencyItems = [override.content]
-    this.scheduler.start(emergencyItems)
-
-    this.emit('emergency-override-active', override)
-  }
-
-  /**
-   * Clear emergency override
-   */
-  private clearEmergencyOverride(): void {
-    if (!this.emergencyOverride) {
-      return
+    if (playlist.items.length === 0) {
+      throw new Error('Playlist is empty')
     }
 
-    logger.info({ overrideId: this.emergencyOverride.id }, 'Clearing emergency override')
+    this.state = playlist.mode === 'emergency' ? 'emergency' : 'playing'
+    this.scheduler.start(playlist.items)
 
-    this.emergencyOverride = undefined
-    this.state = 'stopped'
-
-    // Restart normal playback
-    this.start().catch((error) => {
-      logger.error({ error }, 'Failed to restart playback after emergency')
-    })
-
-    this.emit('emergency-override-cleared')
+    const telemetryService = getTelemetryService()
+    if (this.currentScheduleId) {
+      telemetryService.setCurrentSchedule(this.currentScheduleId)
+    }
   }
 
   /**
@@ -194,25 +164,15 @@ export class PlaybackEngine extends EventEmitter {
   /**
    * Setup schedule manager listeners
    */
-  private setupScheduleManagerListeners(): void {
-    const scheduleManager = getScheduleManager()
+  private setupSnapshotManagerListeners(): void {
+    const snapshotManager = getSnapshotManager()
 
-    scheduleManager.on('schedule-updated', () => {
-      logger.info('Schedule updated, restarting playback')
+    snapshotManager.on('playlist-updated', (playlist: PlaybackPlaylist) => {
+      logger.info({ mode: playlist.mode }, 'Playlist updated, restarting playback')
       this.stop()
-      this.start().catch((error) => {
-        logger.error({ error }, 'Failed to restart playback after schedule update')
+      this.startPlaylist(playlist).catch((error) => {
+        logger.error({ error }, 'Failed to start playback for updated playlist')
       })
-    })
-
-    scheduleManager.on('emergency-override', (override: EmergencyOverride) => {
-      this.handleEmergencyOverride(override).catch((error) => {
-        logger.error({ error }, 'Failed to handle emergency override')
-      })
-    })
-
-    scheduleManager.on('emergency-cleared', () => {
-      this.clearEmergencyOverride()
     })
   }
 
@@ -233,26 +193,25 @@ export class PlaybackEngine extends EventEmitter {
     )
 
     // Mark as now-playing in cache
-    if (item.objectKey) {
+    const mediaId = item.mediaId || item.objectKey
+    if (mediaId) {
       const cacheManager = getCacheManager()
-      cacheManager.markNowPlaying(item.objectKey)
+      cacheManager.markNowPlaying(mediaId)
     }
 
     // Record proof-of-play start
-    const scheduleManager = getScheduleManager()
-    const schedule = scheduleManager.getCurrentSchedule()
-    if (schedule) {
+    if (this.currentScheduleId) {
       const popService = getProofOfPlayService()
-      popService.recordStart(schedule.id, item.id)
+      popService.recordStart(this.currentScheduleId, item.mediaId || item.id)
     }
 
     // Update telemetry
     const telemetryService = getTelemetryService()
-    telemetryService.setCurrentMedia(item.id)
+    telemetryService.setCurrentMedia(item.mediaId || item.id)
 
     // Send to renderer
     if (this.mainWindow) {
-      this.mainWindow.webContents.send('play-media', {
+      this.mainWindow.webContents.send('media-change', {
         item,
         scheduledItem,
       })
@@ -270,17 +229,16 @@ export class PlaybackEngine extends EventEmitter {
     logger.debug({ itemId: item.id }, 'Item completed')
 
     // Unmark as now-playing in cache
-    if (item.objectKey) {
+    const mediaId = item.mediaId || item.objectKey
+    if (mediaId) {
       const cacheManager = getCacheManager()
-      cacheManager.unmarkNowPlaying(item.objectKey)
+      cacheManager.unmarkNowPlaying(mediaId)
     }
 
     // Record proof-of-play end
-    const scheduleManager = getScheduleManager()
-    const schedule = scheduleManager.getCurrentSchedule()
-    if (schedule) {
+    if (this.currentScheduleId) {
       const popService = getProofOfPlayService()
-      popService.recordEnd(schedule.id, item.id, true)
+      popService.recordEnd(this.currentScheduleId, item.mediaId || item.id, true)
     }
 
     this.emit('item-completed', item)
@@ -299,7 +257,8 @@ export class PlaybackEngine extends EventEmitter {
     )
 
     if (this.mainWindow && next) {
-      this.mainWindow.webContents.send('transition-start', {
+      this.mainWindow.webContents.send('playback-update', {
+        type: 'transition-start',
         current: current.item,
         next: next.item,
         durationMs: current.item.transitionDurationMs || 0,
@@ -328,7 +287,8 @@ export class PlaybackEngine extends EventEmitter {
     } else {
       // Show fallback slide
       if (this.mainWindow) {
-        this.mainWindow.webContents.send('show-fallback', {
+        this.mainWindow.webContents.send('playback-update', {
+          type: 'show-fallback',
           message: error.message,
         })
       }
@@ -366,4 +326,3 @@ export function getPlaybackEngine(): PlaybackEngine {
   }
   return playbackEngine
 }
-

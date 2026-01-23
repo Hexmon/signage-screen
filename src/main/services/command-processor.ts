@@ -10,7 +10,7 @@ import { Command, CommandResult, CommandType } from '../../common/types'
 import { getHttpClient } from './network/http-client'
 import { getRequestQueue } from './network/request-queue'
 import { getPairingService } from './pairing-service'
-import { getScheduleManager } from './schedule-manager'
+import { getSnapshotManager } from './snapshot-manager'
 import { getCacheManager } from './cache/cache-manager'
 import { getScreenshotService } from './screenshot-service'
 
@@ -84,7 +84,7 @@ export class CommandProcessor {
 
     try {
       const httpClient = getHttpClient()
-      const response = await httpClient.get<{ commands: Command[] }>(`/v1/device/${deviceId}/commands`)
+      const response = await httpClient.get<{ commands: Command[] }>(`/api/v1/device/${deviceId}/commands`)
       const commands = response?.commands || []
 
       if (!commands || commands.length === 0) {
@@ -141,6 +141,7 @@ export class CommandProcessor {
         case 'REBOOT':
           result = await this.handleReboot(command)
           break
+        case 'REFRESH':
         case 'REFRESH_SCHEDULE':
           result = await this.handleRefreshSchedule(command)
           break
@@ -227,8 +228,8 @@ export class CommandProcessor {
     logger.info({ commandId: command.id }, 'Executing REFRESH_SCHEDULE command')
 
     try {
-      const scheduleManager = getScheduleManager()
-      await scheduleManager.refresh()
+      const snapshotManager = getSnapshotManager()
+      await snapshotManager.refreshSnapshot()
 
       return {
         success: true,
@@ -349,7 +350,7 @@ export class CommandProcessor {
       }
 
       const httpClient = getHttpClient()
-      await httpClient.post(`/v1/device/${deviceId}/commands/${commandId}/ack`, {})
+      await httpClient.post(`/api/v1/device/${deviceId}/commands/${commandId}/ack`, {})
 
       logger.debug({ commandId, success: result.success }, 'Command acknowledged')
     } catch (error) {
@@ -360,7 +361,7 @@ export class CommandProcessor {
           const requestQueue = getRequestQueue()
           await requestQueue.enqueue({
             method: 'POST',
-            url: `/v1/device/${deviceId}/commands/${commandId}/ack`,
+            url: `/api/v1/device/${deviceId}/commands/${commandId}/ack`,
             data: {},
             maxRetries: 3,
           })

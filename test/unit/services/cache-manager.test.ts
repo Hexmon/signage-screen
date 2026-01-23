@@ -6,7 +6,7 @@ import { expect } from 'chai'
 import * as sinon from 'sinon'
 import * as fs from 'fs'
 import * as path from 'path'
-import { createTempDir, cleanupTempDir, createTestFile, calculateHash } from '../../helpers/test-utils'
+import { createTempDir, cleanupTempDir, calculateHash } from '../../helpers/test-utils'
 
 describe('Cache Manager', () => {
   let tempDir: string
@@ -27,11 +27,14 @@ describe('Cache Manager', () => {
       cache: {
         path: cacheDir,
         maxBytes: 10485760, // 10MB for testing
-        downloadConcurrency: 2,
+        prefetchConcurrency: 2,
       },
       intervals: {
         heartbeatMs: 300000,
+        commandPollMs: 30000,
         schedulePollMs: 300000,
+        healthCheckMs: 60000,
+        screenshotMs: 300000,
       },
     }
     fs.writeFileSync(process.env.HEXMON_CONFIG_PATH, JSON.stringify(testConfig, null, 2))
@@ -52,16 +55,16 @@ describe('Cache Manager', () => {
       const { getCacheManager } = require('../../../src/main/services/cache/cache-manager')
       const cacheManager = getCacheManager()
 
-      const objectKey = 'test-file.jpg'
+      const mediaId = 'test-file.jpg'
       const testData = Buffer.from('test content')
       const hash = calculateHash(testData)
 
       // Mock download
       sandbox.stub(cacheManager, 'download' as any).resolves(testData)
 
-      await cacheManager.add(objectKey, `https://example.com/${objectKey}`, hash)
+      await cacheManager.add(mediaId, `https://example.com/${mediaId}`, hash)
 
-      const exists = await cacheManager.has(objectKey)
+      const exists = await cacheManager.has(mediaId)
       expect(exists).to.be.true
     })
 
@@ -69,15 +72,15 @@ describe('Cache Manager', () => {
       const { getCacheManager } = require('../../../src/main/services/cache/cache-manager')
       const cacheManager = getCacheManager()
 
-      const objectKey = 'test-file.jpg'
+      const mediaId = 'test-file.jpg'
       const testData = Buffer.from('test content')
       const hash = calculateHash(testData)
 
       // Mock download
       sandbox.stub(cacheManager, 'download' as any).resolves(testData)
 
-      await cacheManager.add(objectKey, `https://example.com/${objectKey}`, hash)
-      const filePath = await cacheManager.get(objectKey)
+      await cacheManager.add(mediaId, `https://example.com/${mediaId}`, hash)
+      const filePath = await cacheManager.get(mediaId)
 
       expect(filePath).to.exist
       expect(fs.existsSync(filePath!)).to.be.true
@@ -87,7 +90,7 @@ describe('Cache Manager', () => {
       const { getCacheManager } = require('../../../src/main/services/cache/cache-manager')
       const cacheManager = getCacheManager()
 
-      const objectKey = 'test-file.jpg'
+      const mediaId = 'test-file.jpg'
       const testData = Buffer.from('test content')
       const correctHash = calculateHash(testData)
       const wrongHash = 'wrong-hash-value'
@@ -96,8 +99,8 @@ describe('Cache Manager', () => {
       sandbox.stub(cacheManager, 'download' as any).resolves(testData)
 
       // Should succeed with correct hash
-      await cacheManager.add(objectKey, `https://example.com/${objectKey}`, correctHash)
-      expect(await cacheManager.has(objectKey)).to.be.true
+      await cacheManager.add(mediaId, `https://example.com/${mediaId}`, correctHash)
+      expect(await cacheManager.has(mediaId)).to.be.true
 
       // Should fail with wrong hash
       try {
@@ -214,8 +217,8 @@ describe('Cache Manager', () => {
       const cacheManager = getCacheManager()
 
       const items = [
-        { objectKey: 'file1.jpg', url: 'https://example.com/file1.jpg', sha256: calculateHash(Buffer.from('1')) },
-        { objectKey: 'file2.jpg', url: 'https://example.com/file2.jpg', sha256: calculateHash(Buffer.from('2')) },
+        { mediaId: 'file1.jpg', url: 'https://example.com/file1.jpg', sha256: calculateHash(Buffer.from('1')) },
+        { mediaId: 'file2.jpg', url: 'https://example.com/file2.jpg', sha256: calculateHash(Buffer.from('2')) },
       ]
 
       sandbox.stub(cacheManager, 'download' as any)
@@ -229,4 +232,3 @@ describe('Cache Manager', () => {
     })
   })
 })
-

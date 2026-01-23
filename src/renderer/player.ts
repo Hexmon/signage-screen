@@ -3,13 +3,20 @@
  * Handles media rendering and transitions in the renderer process
  */
 
-import { TimelineItem, FitMode } from '../common/types'
+import { FitMode, PlayerStatus, TimelineItem } from '../common/types'
 import './types'
 
 class Player {
   private canvas: HTMLCanvasElement | null = null
   private currentElement?: HTMLElement
   private mediaContainer: HTMLElement | null = null
+  private statusOverlay: HTMLElement | null = null
+  private statusConnection: HTMLElement | null = null
+  private statusDeviceId: HTMLElement | null = null
+  private statusScheduleId: HTMLElement | null = null
+  private statusMediaId: HTMLElement | null = null
+  private statusSnapshot: HTMLElement | null = null
+  private modeBanner: HTMLElement | null = null
 
   constructor() {
     this.initializeElements()
@@ -23,6 +30,13 @@ class Player {
   private initializeElements(): void {
     this.canvas = document.getElementById('media-canvas') as HTMLCanvasElement
     this.mediaContainer = document.getElementById('playback-container')
+    this.statusOverlay = document.getElementById('status-overlay')
+    this.statusConnection = document.getElementById('status-connection')
+    this.statusDeviceId = document.getElementById('status-device-id')
+    this.statusScheduleId = document.getElementById('status-schedule-id')
+    this.statusMediaId = document.getElementById('status-media-id')
+    this.statusSnapshot = document.getElementById('status-snapshot-time')
+    this.modeBanner = document.getElementById('mode-banner')
 
     if (this.canvas) {
       this.resizeCanvas()
@@ -67,6 +81,20 @@ class Player {
           this.log('warn', 'Received show-fallback event', data)
           this.showFallback(data.message)
         }
+      })
+    }
+
+    if (window.hexmon && window.hexmon.onPlayerStatus) {
+      window.hexmon.onPlayerStatus((data: any) => {
+        this.updateStatusOverlay(data as PlayerStatus)
+      })
+    }
+
+    if (window.hexmon && window.hexmon.getPlayerStatus) {
+      window.hexmon.getPlayerStatus().then((status: any) => {
+        this.updateStatusOverlay(status as PlayerStatus)
+      }).catch(() => {
+        // ignore initial status failures
       })
     }
   }
@@ -128,7 +156,7 @@ class Player {
       }
 
       img.onerror = () => {
-        reject(new Error(`Failed to load image: ${item.objectKey || item.url}`))
+        reject(new Error(`Failed to load image: ${item.mediaId || item.objectKey || item.url}`))
       }
 
       // Set source (from cache or URL)
@@ -159,7 +187,7 @@ class Player {
       }
 
       video.onerror = () => {
-        reject(new Error(`Failed to load video: ${item.objectKey || item.url}`))
+        reject(new Error(`Failed to load video: ${item.mediaId || item.objectKey || item.url}`))
       }
 
       video.src = this.getMediaSource(item)
@@ -217,18 +245,20 @@ class Player {
    * Get media source (from cache or URL)
    */
   private getMediaSource(item: TimelineItem): string {
-    // In production, this would get the local cached file path
-    // For now, use URL or construct path from objectKey
-    if (item.url) {
-      return item.url
+    if (item.type === 'url') {
+      if (item.url) return item.url
+      if (item.remoteUrl) return item.remoteUrl
     }
 
-    if (item.objectKey) {
-      // This would be the cached file path
-      return `/cache/${item.objectKey}`
+    if (item.localUrl) {
+      return item.localUrl
     }
 
-    throw new Error('No media source available')
+    if (item.localPath) {
+      return item.localPath
+    }
+
+    throw new Error('Media is not cached')
   }
 
   /**
@@ -309,6 +339,51 @@ class Player {
     this.showElement(fallback)
   }
 
+  private updateStatusOverlay(status: PlayerStatus): void {
+    if (this.statusOverlay) {
+      this.statusOverlay.classList.remove('hidden')
+    }
+
+    if (this.statusConnection) {
+      this.statusConnection.textContent = status.online ? 'ONLINE' : 'OFFLINE'
+      this.statusConnection.className = status.online ? 'status-pill online' : 'status-pill offline'
+    }
+
+    if (this.statusDeviceId) {
+      this.statusDeviceId.textContent = status.deviceId || '-'
+    }
+
+    if (this.statusScheduleId) {
+      this.statusScheduleId.textContent = status.scheduleId || '-'
+    }
+
+    if (this.statusMediaId) {
+      this.statusMediaId.textContent = status.currentMediaId || '-'
+    }
+
+    if (this.statusSnapshot) {
+      this.statusSnapshot.textContent = status.lastSnapshotAt ? new Date(status.lastSnapshotAt).toLocaleString() : '-'
+    }
+
+    if (this.modeBanner) {
+      this.modeBanner.classList.remove('hidden', 'emergency', 'default', 'offline')
+
+      if (status.mode === 'emergency') {
+        this.modeBanner.textContent = 'EMERGENCY'
+        this.modeBanner.classList.add('emergency')
+      } else if (status.mode === 'default') {
+        this.modeBanner.textContent = 'DEFAULT MEDIA'
+        this.modeBanner.classList.add('default')
+      } else if (status.mode === 'offline' || status.mode === 'empty') {
+        this.modeBanner.textContent = 'OFFLINE MODE'
+        this.modeBanner.classList.add('offline')
+      } else {
+        this.modeBanner.textContent = ''
+        this.modeBanner.classList.add('hidden')
+      }
+    }
+  }
+
   /**
    * Log message to main process
    */
@@ -329,4 +404,3 @@ if (document.readyState === 'loading') {
 } else {
   new Player()
 }
-

@@ -39,6 +39,7 @@ export interface IntervalsConfig {
   commandPollMs: number
   schedulePollMs: number
   healthCheckMs: number
+  screenshotMs: number
 }
 
 export interface LogConfig {
@@ -73,9 +74,39 @@ export interface SecurityConfig {
 export type MediaType = 'image' | 'video' | 'pdf' | 'url' | 'office'
 export type FitMode = 'contain' | 'cover' | 'stretch'
 
+// Player state machine
+export type PlayerState =
+  | 'BOOT'
+  | 'NEED_PAIRING'
+  | 'PAIRING_REQUESTED'
+  | 'WAITING_CONFIRMATION'
+  | 'CERT_ISSUED'
+  | 'PLAYBACK_RUNNING'
+  | 'OFFLINE_FALLBACK'
+  | 'ERROR'
+
+export type PlaybackMode = 'normal' | 'emergency' | 'default' | 'offline' | 'empty'
+
+export interface PlayerStatus {
+  state: PlayerState
+  mode: PlaybackMode
+  online: boolean
+  deviceId?: string
+  scheduleId?: string
+  currentMediaId?: string
+  lastSnapshotAt?: string
+  error?: string
+}
+
 export interface TimelineItem {
   id: string
   type: MediaType
+  // Preferred identifiers
+  mediaId?: string
+  remoteUrl?: string
+  localPath?: string
+  localUrl?: string
+  // Legacy fields
   objectKey?: string
   url?: string
   displayMs: number
@@ -104,12 +135,94 @@ export interface EmergencyOverride {
   clearedAt?: string
 }
 
+// Snapshot payload (device API)
+export interface SnapshotScheduleItem {
+  id?: string
+  media_id?: string
+  mediaId?: string
+  type?: MediaType
+  media_type?: MediaType
+  display_ms?: number
+  displayMs?: number
+  duration_ms?: number
+  durationMs?: number
+  fit?: FitMode
+  fit_mode?: FitMode
+  muted?: boolean
+  transition_ms?: number
+  transitionDurationMs?: number
+  meta?: Record<string, unknown>
+  media_url?: string
+  url?: string
+  sha256?: string
+}
+
+export interface SnapshotSchedule {
+  id?: string
+  version?: number
+  items?: SnapshotScheduleItem[]
+}
+
+export interface SnapshotMediaUrlMap {
+  [mediaId: string]: string
+}
+
+export interface SnapshotMediaEntry {
+  media_id?: string
+  mediaId?: string
+  url?: string
+  media_url?: string
+  type?: MediaType
+  media_type?: MediaType
+  sha256?: string
+  size?: number
+}
+
+export interface DeviceSnapshot {
+  id?: string
+  snapshot_id?: string
+  schedule?: SnapshotSchedule
+  items?: SnapshotScheduleItem[]
+  media_urls?: SnapshotMediaUrlMap
+  mediaUrls?: SnapshotMediaUrlMap
+  media?: SnapshotMediaEntry[]
+  emergency?: {
+    active?: boolean
+    media_id?: string
+    mediaId?: string
+    media_url?: string
+    url?: string
+    type?: MediaType
+    media_type?: MediaType
+    display_ms?: number
+    displayMs?: number
+    fit?: FitMode
+    muted?: boolean
+    transition_ms?: number
+  }
+  default_media?: {
+    media_id?: string
+    mediaId?: string
+    media_url?: string
+    url?: string
+    type?: MediaType
+    media_type?: MediaType
+    display_ms?: number
+    displayMs?: number
+    fit?: FitMode
+    muted?: boolean
+    transition_ms?: number
+  }
+  generated_at?: string
+  fetched_at?: string
+}
+
 // ============================================================================
 // Cache Types
 // ============================================================================
 
 export interface CacheEntry {
-  objectKey: string
+  mediaId: string
   sha256: string
   size: number
   etag?: string
@@ -201,7 +314,14 @@ export interface ProofOfPlayEvent {
 // Device Commands Types
 // ============================================================================
 
-export type CommandType = 'REBOOT' | 'REFRESH_SCHEDULE' | 'SCREENSHOT' | 'TEST_PATTERN' | 'CLEAR_CACHE' | 'PING'
+export type CommandType =
+  | 'REBOOT'
+  | 'REFRESH'
+  | 'REFRESH_SCHEDULE'
+  | 'SCREENSHOT'
+  | 'TEST_PATTERN'
+  | 'CLEAR_CACHE'
+  | 'PING'
 
 export interface DeviceCommand {
   id: string
@@ -255,6 +375,8 @@ export interface DiagnosticsInfo {
   dnsResolution?: boolean
   apiReachable?: boolean
   latency?: number
+  playerState?: PlayerState
+  playbackMode?: PlaybackMode
 }
 
 // ============================================================================
@@ -265,6 +387,42 @@ export interface PairingRequest {
   pairing_code: string
   csr: string
   device_info?: DeviceInfo
+}
+
+export interface PairingStatusResponse {
+  device_id: string
+  paired: boolean
+  screen: {
+    id: string
+    status: string
+  } | null
+}
+
+export type PairingOrientation = 'landscape' | 'portrait'
+
+export interface PairingCodeRequest {
+  device_label: string
+  width: number
+  height: number
+  aspect_ratio: string
+  orientation: PairingOrientation
+  model: string
+  codecs: string[]
+  device_info?: {
+    os?: string
+    [key: string]: unknown
+  }
+}
+
+export interface PairingCodeResponse {
+  id: string
+  device_id: string
+  pairing_code: string
+  expires_at: string
+  expires_in: number
+  connected: boolean
+  observed_ip?: string
+  specs?: Record<string, unknown>
 }
 
 export interface PairingResponse {

@@ -166,40 +166,14 @@ async function initializeServices(): Promise<void> {
       throw new Error('Invalid configuration: ' + validation.errors.join(', '))
     }
 
-    // Import services
-    const { getPairingService } = await import('./services/pairing-service')
-    const { getTelemetryService } = await import('./services/telemetry/telemetry-service')
-    const { getScheduleManager } = await import('./services/schedule-manager')
-    const { getPlaybackEngine } = await import('./services/playback/playback-engine')
-    const { getWebSocketClient } = await import('./services/network/websocket-client')
+    const { getPlayerFlow } = await import('./services/player-flow')
+    const playerFlow = getPlayerFlow()
 
-    // 1. Check pairing status
-    const pairingService = getPairingService()
-    if (!pairingService.isPairedDevice()) {
-      logger.warn('Device not paired, pairing required')
-      // Pairing screen will be shown in renderer
-      return
-    }
-
-    // 2. Start telemetry service
-    const telemetryService = getTelemetryService()
-    await telemetryService.start()
-
-    // 3. Connect WebSocket
-    const wsClient = getWebSocketClient()
-    await wsClient.connect()
-
-    // 4. Start schedule manager
-    const scheduleManager = getScheduleManager()
-    await scheduleManager.start()
-
-    // 5. Initialize playback engine
-    const playbackEngine = getPlaybackEngine()
     if (mainWindow) {
-      playbackEngine.initialize(mainWindow)
-      await playbackEngine.start()
+      playerFlow.initialize(mainWindow)
     }
 
+    await playerFlow.start()
     logger.info('All services initialized successfully')
   } catch (error) {
     logger.fatal({ error }, 'Failed to initialize services')
@@ -214,45 +188,81 @@ function setupIPCHandlers(): void {
   const { ipcMain } = require('electron')
 
   // Pairing
+  ipcMain.handle('pairing-request', async (_event: any, payload?: any) => {
+    const { getPlayerFlow } = await import('./services/player-flow')
+    return await getPlayerFlow().requestPairingCode(payload)
+  })
+
+  ipcMain.handle('pairing-status', async () => {
+    const { getPlayerFlow } = await import('./services/player-flow')
+    return await getPlayerFlow().checkPairingStatus()
+  })
+
+  ipcMain.handle('pairing-complete', async (_event: any, code?: string) => {
+    const { getPlayerFlow } = await import('./services/player-flow')
+    return await getPlayerFlow().completePairing(code)
+  })
+
+  // Backwards compatibility
   ipcMain.handle('submit-pairing', async (_event: any, code: string) => {
-    const { getPairingService } = await import('./services/pairing-service')
-    const pairingService = getPairingService()
-    return await pairingService.submitPairing(code)
+    const { getPlayerFlow } = await import('./services/player-flow')
+    return await getPlayerFlow().completePairing(code)
   })
 
   ipcMain.handle('get-pairing-status', async () => {
+    const { getPlayerFlow } = await import('./services/player-flow')
+    return await getPlayerFlow().checkPairingStatus()
+  })
+
+  ipcMain.handle('request-pairing-code', async (_event: any, payload?: any) => {
+    const { getPlayerFlow } = await import('./services/player-flow')
+    return await getPlayerFlow().requestPairingCode(payload)
+  })
+
+  ipcMain.handle('get-player-status', async () => {
+    const { getPlayerFlow } = await import('./services/player-flow')
+    return getPlayerFlow().getStatus()
+  })
+
+  ipcMain.handle('get-player-state', async () => {
+    const { getPlayerFlow } = await import('./services/player-flow')
+    return getPlayerFlow().getState()
+  })
+
+  ipcMain.handle('get-device-info', async () => {
     const { getPairingService } = await import('./services/pairing-service')
-    const pairingService = getPairingService()
-    return {
-      paired: pairingService.isPairedDevice(),
-      deviceId: pairingService.getDeviceId(),
-    }
+    return getPairingService().getDeviceInfo()
   })
 
   // Diagnostics
   ipcMain.handle('get-diagnostics', async () => {
     const { getPairingService } = await import('./services/pairing-service')
-    const { getWebSocketClient } = await import('./services/network/websocket-client')
-    const { getScheduleManager } = await import('./services/schedule-manager')
+    const { getSnapshotManager } = await import('./services/snapshot-manager')
     const { getRequestQueue } = await import('./services/network/request-queue')
+    const { getPlayerFlow } = await import('./services/player-flow')
 
     const pairingService = getPairingService()
-    const wsClient = getWebSocketClient()
-    const scheduleManager = getScheduleManager()
+    const snapshotManager = getSnapshotManager()
     const requestQueue = getRequestQueue()
+    const playerFlow = getPlayerFlow()
 
     const diagnostics = await pairingService.runDiagnostics()
-    const schedule = scheduleManager.getCurrentSchedule()
+    const playlist = snapshotManager.getCurrentPlaylist()
 
     return {
       deviceId: pairingService.getDeviceId() || 'Not paired',
       ipAddress: diagnostics.ipAddresses.join(', '),
-      wsState: wsClient.getState(),
-      lastSync: schedule ? new Date().toISOString() : undefined,
+      wsState: 'disconnected',
+      lastSync: playlist?.lastSnapshotAt,
       commandQueueSize: requestQueue.getSize(),
       screenMode: 'fullscreen',
       uptime: process.uptime(),
       version: app.getVersion(),
+      dnsResolution: diagnostics.dnsResolution,
+      apiReachable: diagnostics.apiReachable,
+      latency: diagnostics.latency,
+      playerState: playerFlow.getState(),
+      playbackMode: playerFlow.getStatus().mode,
     }
   })
 
@@ -283,25 +293,12 @@ async function cleanup(): Promise<void> {
   logger.info('Cleaning up...')
 
   try {
-    // Stop all services
-    const { getTelemetryService } = await import('./services/telemetry/telemetry-service')
-    const { getScheduleManager } = await import('./services/schedule-manager')
-    const { getPlaybackEngine } = await import('./services/playback/playback-engine')
-    const { getWebSocketClient } = await import('./services/network/websocket-client')
+    const { getPlayerFlow } = await import('./services/player-flow')
     const { getProofOfPlayService } = await import('./services/pop-service')
     const { getCacheManager } = await import('./services/cache/cache-manager')
 
-    const telemetryService = getTelemetryService()
-    await telemetryService.stop()
-
-    const scheduleManager = getScheduleManager()
-    scheduleManager.stop()
-
-    const playbackEngine = getPlaybackEngine()
-    playbackEngine.stop()
-
-    const wsClient = getWebSocketClient()
-    wsClient.disconnect()
+    const playerFlow = getPlayerFlow()
+    await playerFlow.stop()
 
     const popService = getProofOfPlayService()
     await popService.cleanup()
@@ -324,8 +321,8 @@ app.on('ready', async () => {
 
   try {
     setupIPCHandlers()
-    await initializeServices()
     createWindow()
+    await initializeServices()
   } catch (error) {
     logger.fatal({ error }, 'Failed to start application')
     app.quit()
@@ -363,4 +360,3 @@ process.on('unhandledRejection', (reason) => {
 
 // Log startup complete
 logger.info('Main process initialized')
-

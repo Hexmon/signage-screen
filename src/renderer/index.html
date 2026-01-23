@@ -82,29 +82,85 @@
       opacity: 0.9;
     }
 
-    .pairing-input-container {
+    .pairing-code-card {
       display: flex;
-      gap: 10px;
-      margin-bottom: 30px;
-    }
-
-    .pairing-code-input {
-      width: 60px;
-      height: 80px;
-      font-size: 36px;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      padding: 24px 32px;
+      margin-bottom: 20px;
+      background: rgba(0, 0, 0, 0.25);
+      border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
       text-align: center;
-      border: 2px solid rgba(255, 255, 255, 0.3);
-      border-radius: 8px;
-      background: rgba(255, 255, 255, 0.1);
-      color: #fff;
-      text-transform: uppercase;
-      font-weight: bold;
+      min-width: 320px;
     }
 
-    .pairing-code-input:focus {
+    .pairing-form {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      width: 100%;
+      max-width: 720px;
+      margin-bottom: 24px;
+    }
+
+    .pairing-field {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background: rgba(0, 0, 0, 0.2);
+      padding: 12px 16px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+    }
+
+    .pairing-field label {
+      font-size: 12px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      opacity: 0.7;
+    }
+
+    .pairing-input {
+      background: transparent;
+      border: none;
+      color: #fff;
+      font-size: 16px;
+      font-weight: 600;
       outline: none;
-      border-color: #fff;
-      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .pairing-static {
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .pairing-code-label {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.3em;
+      opacity: 0.7;
+    }
+
+    .pairing-code {
+      font-size: 56px;
+      font-weight: bold;
+      letter-spacing: 0.2em;
+      padding: 12px 24px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.15);
+      min-width: 320px;
+    }
+
+    .pairing-code-meta {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      font-size: 14px;
+      opacity: 0.85;
     }
 
     .pairing-button {
@@ -126,6 +182,26 @@
     .pairing-button:disabled {
       opacity: 0.5;
       cursor: not-allowed;
+    }
+
+    .pairing-button.secondary {
+      background: transparent;
+      color: #fff;
+      border: 2px solid rgba(255, 255, 255, 0.6);
+    }
+
+    .pairing-actions {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-top: 8px;
+    }
+
+    .pairing-meta {
+      margin-top: 8px;
+      font-size: 14px;
+      opacity: 0.85;
     }
 
     .pairing-status {
@@ -261,6 +337,85 @@
       text-align: center;
       max-width: 600px;
     }
+
+    /* Status Overlay */
+    #status-overlay {
+      position: absolute;
+      top: 24px;
+      left: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 16px 18px;
+      border-radius: 12px;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(6px);
+      font-size: 13px;
+      min-width: 260px;
+      z-index: 10;
+    }
+
+    #status-overlay.hidden {
+      display: none;
+    }
+
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .status-pill {
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      font-size: 11px;
+    }
+
+    .status-pill.online {
+      background: rgba(81, 207, 102, 0.2);
+      color: #51cf66;
+    }
+
+    .status-pill.offline {
+      background: rgba(255, 107, 107, 0.2);
+      color: #ff6b6b;
+    }
+
+    /* Mode banner */
+    #mode-banner {
+      position: absolute;
+      top: 24px;
+      right: 24px;
+      padding: 10px 18px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      background: rgba(255, 255, 255, 0.1);
+      z-index: 10;
+    }
+
+    #mode-banner.hidden {
+      display: none;
+    }
+
+    #mode-banner.emergency {
+      background: rgba(255, 107, 107, 0.25);
+      color: #ff6b6b;
+    }
+
+    #mode-banner.default {
+      background: rgba(81, 207, 102, 0.2);
+      color: #51cf66;
+    }
+
+    #mode-banner.offline {
+      background: rgba(255, 214, 102, 0.2);
+      color: #ffd666;
+    }
   </style>
 </head>
 <body>
@@ -269,24 +424,68 @@
     <canvas id="media-canvas"></canvas>
   </div>
 
+  <div id="status-overlay" class="hidden">
+    <div class="status-row">
+      <span>Status</span>
+      <span id="status-connection" class="status-pill offline">OFFLINE</span>
+    </div>
+    <div class="status-row">
+      <span>Device</span>
+      <span id="status-device-id">-</span>
+    </div>
+    <div class="status-row">
+      <span>Schedule</span>
+      <span id="status-schedule-id">-</span>
+    </div>
+    <div class="status-row">
+      <span>Media</span>
+      <span id="status-media-id">-</span>
+    </div>
+    <div class="status-row">
+      <span>Last Snapshot</span>
+      <span id="status-snapshot-time">-</span>
+    </div>
+  </div>
+
+  <div id="mode-banner" class="hidden"></div>
+
   <!-- Pairing Screen -->
   <div id="pairing-screen" class="hidden">
     <div class="pairing-logo">🖥️ HexmonSignage</div>
     <h1 class="pairing-title">Device Pairing</h1>
     <p class="pairing-instructions">
-      Enter the 6-character pairing code from your admin dashboard to connect this device.
+      Use this code in your CMS to connect this screen. It refreshes automatically when it expires.
     </p>
-    
-    <div class="pairing-input-container">
-      <input type="text" class="pairing-code-input" maxlength="1" id="code-1" autocomplete="off">
-      <input type="text" class="pairing-code-input" maxlength="1" id="code-2" autocomplete="off">
-      <input type="text" class="pairing-code-input" maxlength="1" id="code-3" autocomplete="off">
-      <input type="text" class="pairing-code-input" maxlength="1" id="code-4" autocomplete="off">
-      <input type="text" class="pairing-code-input" maxlength="1" id="code-5" autocomplete="off">
-      <input type="text" class="pairing-code-input" maxlength="1" id="code-6" autocomplete="off">
+
+    <div class="pairing-form">
+      <div class="pairing-field">
+        <label for="device-label">Device Label</label>
+        <input id="device-label" class="pairing-input" placeholder="Lobby Screen" />
+      </div>
+      <div class="pairing-field">
+        <label>Resolution</label>
+        <div id="device-resolution" class="pairing-static">-</div>
+      </div>
+      <div class="pairing-field">
+        <label>Model</label>
+        <div id="device-model" class="pairing-static">-</div>
+      </div>
     </div>
 
-    <button class="pairing-button" id="pair-button">Pair Device</button>
+    <div class="pairing-code-card">
+      <div class="pairing-code-label">Pairing Code</div>
+      <div class="pairing-code" id="pairing-code">- - - - - -</div>
+      <div class="pairing-code-meta">
+        <span id="pairing-expiry">Expires in --:--</span>
+        <button class="pairing-button secondary" id="pairing-refresh">Generate New Code</button>
+      </div>
+    </div>
+
+    <div class="pairing-actions">
+      <button class="pairing-button" id="pairing-complete" disabled>Complete Pairing</button>
+    </div>
+
+    <div class="pairing-meta">Device ID: <span id="pairing-device-id">-</span></div>
     
     <div class="pairing-status" id="pairing-status"></div>
 
@@ -343,4 +542,3 @@
   <script src="./diagnostics.bundle.js"></script>
 </body>
 </html>
-

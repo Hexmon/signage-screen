@@ -13,6 +13,12 @@ import { retryWithBackoff } from '../../../common/utils'
 
 const logger = getLogger('http-client')
 
+declare module 'axios' {
+  export interface AxiosRequestConfig {
+    mtls?: boolean
+  }
+}
+
 export class HttpClient {
   private client: AxiosInstance
   private mtlsEnabled: boolean
@@ -44,7 +50,8 @@ export class HttpClient {
     this.client.interceptors.request.use(
       async (config) => {
         // Add mTLS certificates if enabled
-        if (this.mtlsEnabled) {
+        const shouldUseMtls = this.mtlsEnabled && config.mtls !== false && this.isHttpsRequest(config)
+        if (shouldUseMtls) {
           const httpsAgent = await this.createMTLSAgent()
           config.httpsAgent = httpsAgent
         }
@@ -82,6 +89,26 @@ export class HttpClient {
         return Promise.reject(error)
       }
     )
+  }
+
+  private isHttpsRequest(config: AxiosRequestConfig): boolean {
+    const url = config.url || ''
+    if (url.startsWith('https://')) {
+      return true
+    }
+    if (url.startsWith('http://')) {
+      return false
+    }
+
+    const base = config.baseURL || this.client.defaults.baseURL || ''
+    if (base.startsWith('https://')) {
+      return true
+    }
+    if (base.startsWith('http://')) {
+      return false
+    }
+
+    return false
   }
 
   /**
@@ -229,22 +256,6 @@ export class HttpClient {
   }
 
   /**
-   * Set authorization header
-   */
-  setAuthToken(token: string): void {
-    this.client.defaults.headers.common['Authorization'] = `Bearer ${token}`
-    logger.debug('Authorization token set')
-  }
-
-  /**
-   * Clear authorization header
-   */
-  clearAuthToken(): void {
-    delete this.client.defaults.headers.common['Authorization']
-    logger.debug('Authorization token cleared')
-  }
-
-  /**
    * Get axios instance for advanced usage
    */
   getAxiosInstance(): AxiosInstance {
@@ -261,4 +272,3 @@ export function getHttpClient(): HttpClient {
   }
   return httpClient
 }
-

@@ -9,7 +9,6 @@ import { getConfigManager } from '../../common/config'
 import { ScheduleSnapshot, EmergencyOverride, TimelineItem } from '../../common/types'
 import { getHttpClient } from './network/http-client'
 import { getWebSocketClient } from './network/websocket-client'
-import { getCacheManager } from './cache/cache-manager'
 import { getPairingService } from './pairing-service'
 import { getTelemetryService } from './telemetry/telemetry-service'
 
@@ -75,11 +74,14 @@ export class ScheduleManager extends EventEmitter {
   async fetchSchedule(): Promise<ScheduleSnapshot> {
     if (!this.scheduleApiSupported) {
       logger.debug('Schedule API marked unsupported; skipping fetch')
-      return this.currentSchedule || {
-        id: 'unsupported',
-        version: 0,
-        items: [],
-      }
+      return (
+        this.currentSchedule || {
+          id: 'unsupported',
+          version: 0,
+          publishedAt: new Date().toISOString(),
+          items: [],
+        }
+      )
     }
 
     const pairingService = getPairingService()
@@ -135,6 +137,7 @@ export class ScheduleManager extends EventEmitter {
         return {
           id: 'unsupported',
           version: 0,
+          publishedAt: new Date().toISOString(),
           items: [],
         }
       }
@@ -231,16 +234,6 @@ export class ScheduleManager extends EventEmitter {
     } finally {
       this.prefetchInProgress = false
     }
-  }
-
-  /**
-   * Get media URL from object key
-   * In production, this would get a presigned URL from backend
-   */
-  private getMediaUrl(objectKey: string): string {
-    const config = getConfigManager().getConfig()
-    // This is a placeholder - in production, you'd call backend to get presigned URL
-    return `${config.apiBase}/v1/media/${objectKey}`
   }
 
   /**

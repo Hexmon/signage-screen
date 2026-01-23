@@ -105,7 +105,7 @@ export class ScreenshotService {
       }
 
       const response = await httpClient.post<{ success?: boolean; object_key?: string; timestamp?: string }>(
-        '/v1/device/screenshot',
+        '/api/v1/device/screenshot',
         payload
       )
 
@@ -128,7 +128,7 @@ export class ScreenshotService {
         const requestQueue = getRequestQueue()
         await requestQueue.enqueue({
           method: 'POST',
-          url: '/v1/device/screenshot',
+          url: '/api/v1/device/screenshot',
           data: {
             device_id: deviceId,
             timestamp,

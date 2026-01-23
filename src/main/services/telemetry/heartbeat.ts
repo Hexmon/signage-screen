@@ -111,7 +111,7 @@ export class HeartbeatService {
 
       // Send heartbeat
       const httpClient = getHttpClient()
-      await httpClient.post('/v1/device/heartbeat', payload)
+      await httpClient.post('/api/v1/device/heartbeat', payload)
 
       logger.debug({ deviceId }, 'Heartbeat sent successfully')
     } catch (error) {
@@ -121,7 +121,7 @@ export class HeartbeatService {
       const requestQueue = getRequestQueue()
       await requestQueue.enqueue({
         method: 'POST',
-        url: '/v1/device/heartbeat',
+        url: '/api/v1/device/heartbeat',
         data: {
           device_id: getPairingService().getDeviceId(),
           status: 'OFFLINE',

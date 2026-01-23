@@ -3,21 +3,34 @@
  * Handles device pairing UI and network diagnostics
  */
 
-// Import shared types
+import type { PairingCodeRequest, PairingCodeResponse, PairingStatusResponse, PlayerStatus } from '../common/types'
 import './types'
 
 class PairingScreen {
-  private inputs: HTMLInputElement[] = []
-  private pairButton: HTMLButtonElement | null = null
+  private pairingCodeElement: HTMLElement | null = null
+  private pairingExpiryElement: HTMLElement | null = null
+  private refreshButton: HTMLButtonElement | null = null
+  private completeButton: HTMLButtonElement | null = null
   private statusElement: HTMLElement | null = null
   private diagnosticsList: HTMLElement | null = null
   private pairingScreenElement: HTMLElement | null = null
+  private deviceIdElement: HTMLElement | null = null
+  private deviceLabelInput: HTMLInputElement | null = null
+  private resolutionElement: HTMLElement | null = null
+  private modelElement: HTMLElement | null = null
+
+  private statusPollTimer?: number
+  private expiryTimer?: number
+  private expiresAt?: number
+  private requestingCode = false
+  private completingPairing = false
 
   constructor() {
     this.initializeElements()
     this.setupEventListeners()
-    this.checkPairingStatus()
+    this.bootstrapPairing()
     this.runDiagnostics()
+    this.listenForStatusUpdates()
   }
 
   /**
@@ -25,37 +38,184 @@ class PairingScreen {
    */
   private initializeElements(): void {
     this.pairingScreenElement = document.getElementById('pairing-screen')
-
-    // Get code inputs
-    for (let i = 1; i <= 6; i++) {
-      const input = document.getElementById(`code-${i}`) as HTMLInputElement
-      if (input) {
-        this.inputs.push(input)
-      }
-    }
-
-    this.pairButton = document.getElementById('pair-button') as HTMLButtonElement
+    this.pairingCodeElement = document.getElementById('pairing-code')
+    this.pairingExpiryElement = document.getElementById('pairing-expiry')
+    this.refreshButton = document.getElementById('pairing-refresh') as HTMLButtonElement
+    this.completeButton = document.getElementById('pairing-complete') as HTMLButtonElement
     this.statusElement = document.getElementById('pairing-status')
     this.diagnosticsList = document.getElementById('diagnostics-list')
+    this.deviceIdElement = document.getElementById('pairing-device-id')
+    this.deviceLabelInput = document.getElementById('device-label') as HTMLInputElement
+    this.resolutionElement = document.getElementById('device-resolution')
+    this.modelElement = document.getElementById('device-model')
+  }
+
+  /**
+   * Setup event listeners
+   */
+  private setupEventListeners(): void {
+    this.refreshButton?.addEventListener('click', () => {
+      this.requestPairingCode(true).catch((error) => {
+        console.error('[Pairing] Failed to refresh pairing code:', error)
+      })
+    })
+
+    this.completeButton?.addEventListener('click', () => {
+      this.completePairing().catch((error) => {
+        console.error('[Pairing] Failed to complete pairing:', error)
+      })
+    })
+  }
+
+  /**
+   * Bootstrap pairing status and code
+   */
+  private async bootstrapPairing(): Promise<void> {
+    await this.populateDeviceInfo()
+
+    const status = await this.refreshPairingStatus()
+
+    if (!status || !status.paired) {
+      await this.requestPairingCode(false)
+      this.startStatusPolling()
+    }
+  }
+
+  private listenForStatusUpdates(): void {
+    if (window.hexmon?.onPlayerStatus) {
+      window.hexmon.onPlayerStatus((data: any) => {
+        const status = data as PlayerStatus
+        if (status.state === 'PLAYBACK_RUNNING' || status.state === 'OFFLINE_FALLBACK') {
+          this.hidePairingScreen()
+        } else if (status.state === 'NEED_PAIRING' || status.state === 'PAIRING_REQUESTED' || status.state === 'WAITING_CONFIRMATION') {
+          this.showPairingScreen()
+        }
+      })
+    }
+  }
+
+  private async populateDeviceInfo(): Promise<void> {
+    try {
+      const info = await window.hexmon.getDeviceInfo()
+      if (this.deviceLabelInput && info && typeof info === 'object') {
+        const hostname = (info as any).hostname || ''
+        this.deviceLabelInput.value = hostname
+      }
+
+      const width = window.screen.width
+      const height = window.screen.height
+      if (this.resolutionElement) {
+        this.resolutionElement.textContent = `${width} × ${height}`
+      }
+
+      if (this.modelElement && info && typeof info === 'object') {
+        this.modelElement.textContent = `${(info as any).platform || 'Unknown'} ${(info as any).arch || ''}`
+      }
+    } catch (error) {
+      console.error('[Pairing] Failed to load device info:', error)
+    }
   }
 
   /**
    * Check pairing status and show/hide screen accordingly
    */
-  private async checkPairingStatus(): Promise<void> {
+  private async refreshPairingStatus(): Promise<PairingStatusResponse | null> {
     try {
       const status = await window.hexmon.getPairingStatus()
-      if (!status.paired) {
-        // Device not paired, show pairing screen
-        this.showPairingScreen()
-      } else {
-        // Device is paired, hide pairing screen
-        this.hidePairingScreen()
+
+      if (status.paired) {
+        this.enableCompleteButton(true)
+        if (!this.completingPairing) {
+          this.completePairing().catch((error) => {
+            console.error('[Pairing] Auto-complete failed:', error)
+          })
+        }
       }
+
+      if (status.device_id && this.deviceIdElement) {
+        this.deviceIdElement.textContent = status.device_id
+      }
+
+      if (status.paired) {
+        this.showStatus('Pairing approved. Complete setup to fetch certificate.', 'success')
+      }
+
+      return status
     } catch (error) {
       console.error('[Pairing] Failed to check pairing status:', error)
-      // On error, show pairing screen to be safe
       this.showPairingScreen()
+      this.showStatus('Unable to check pairing status. Retrying...', 'error')
+      return null
+    }
+  }
+
+  /**
+   * Request a pairing code from backend
+   */
+  private async requestPairingCode(force: boolean): Promise<void> {
+    if (this.requestingCode) return
+
+    if (!force && this.expiresAt && Date.now() < this.expiresAt) {
+      return
+    }
+
+    this.requestingCode = true
+    this.showStatus('Generating pairing code...', '')
+    this.updatePairingCode('------')
+
+    try {
+      const payload = this.buildPairingRequestPayload()
+      const response = await window.hexmon.requestPairingCode(payload)
+      this.applyPairingResponse(response)
+      this.showStatus('Enter this code in your CMS to connect.', '')
+      this.enableCompleteButton(false)
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to generate pairing code'
+      this.showStatus(errorMessage, 'error')
+    } finally {
+      this.requestingCode = false
+    }
+  }
+
+  private buildPairingRequestPayload(): Partial<PairingCodeRequest> {
+    const width = window.screen.width
+    const height = window.screen.height
+    const orientation = width >= height ? 'landscape' : 'portrait'
+    const aspectRatio = this.getAspectRatio(width, height)
+
+    return {
+      device_label: this.deviceLabelInput?.value?.trim() || 'Hexmon Screen',
+      width,
+      height,
+      orientation,
+      aspect_ratio: aspectRatio,
+      model: this.modelElement?.textContent || 'unknown',
+      codecs: ['h264'],
+      device_info: {
+        os: navigator.userAgent,
+      },
+    }
+  }
+
+  /**
+   * Complete pairing and fetch certificate
+   */
+  private async completePairing(): Promise<void> {
+    if (this.completingPairing) return
+
+    this.completingPairing = true
+    this.showStatus('Completing pairing, requesting certificate...', '')
+
+    try {
+      await window.hexmon.completePairing()
+      this.showStatus('Certificate issued. Starting playback...', 'success')
+      this.hidePairingScreen()
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to complete pairing'
+      this.showStatus(errorMessage, 'error')
+      this.enableCompleteButton(true)
+    } finally {
+      this.completingPairing = false
     }
   }
 
@@ -65,10 +225,6 @@ class PairingScreen {
   private showPairingScreen(): void {
     if (this.pairingScreenElement) {
       this.pairingScreenElement.classList.remove('hidden')
-      // Focus first input
-      if (this.inputs.length > 0) {
-        this.inputs[0]?.focus()
-      }
     }
   }
 
@@ -79,141 +235,101 @@ class PairingScreen {
     if (this.pairingScreenElement) {
       this.pairingScreenElement.classList.add('hidden')
     }
+    this.stopStatusPolling()
   }
 
   /**
-   * Setup event listeners
+   * Apply pairing response details to UI
    */
-  private setupEventListeners(): void {
-    // Auto-focus next input
-    this.inputs.forEach((input, index) => {
-      input.addEventListener('input', (e) => {
-        const target = e.target as HTMLInputElement
-        const value = target.value.toUpperCase()
+  private applyPairingResponse(response: PairingCodeResponse): void {
+    const code = response.pairing_code ? String(response.pairing_code).toUpperCase() : '------'
+    this.updatePairingCode(code)
+    this.setExpiry(response)
+    this.startExpiryTimer()
 
-        // Only allow alphanumeric
-        if (!/^[A-Z0-9]$/.test(value)) {
-          target.value = ''
-          return
-        }
-
-        target.value = value
-
-        // Move to next input
-        if (value && index < this.inputs.length - 1) {
-          this.inputs[index + 1]?.focus()
-        }
-
-        // Enable button if all filled
-        this.updateButtonState()
-      })
-
-      // Handle backspace
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Backspace' && !input.value && index > 0) {
-          this.inputs[index - 1]?.focus()
-        }
-      })
-
-      // Handle paste
-      input.addEventListener('paste', (e) => {
-        e.preventDefault()
-        const pastedData = e.clipboardData?.getData('text').toUpperCase() || ''
-        const chars = pastedData.replace(/[^A-Z0-9]/g, '').split('')
-
-        chars.forEach((char, i) => {
-          const targetIndex = index + i
-          if (targetIndex < this.inputs.length) {
-            const targetInput = this.inputs[targetIndex]
-            if (targetInput) {
-              targetInput.value = char
-            }
-          }
-        })
-
-        // Focus last filled input
-        const lastIndex = Math.min(index + chars.length, this.inputs.length - 1)
-        this.inputs[lastIndex]?.focus()
-
-        this.updateButtonState()
-      })
-    })
-
-    // Pair button click
-    this.pairButton?.addEventListener('click', () => {
-      this.submitPairing()
-    })
-
-    // Enter key to submit
-    this.inputs.forEach((input) => {
-      input.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter' && this.isPairingCodeComplete()) {
-          this.submitPairing()
-        }
-      })
-    })
-  }
-
-  /**
-   * Update button state
-   */
-  private updateButtonState(): void {
-    if (this.pairButton) {
-      this.pairButton.disabled = !this.isPairingCodeComplete()
+    if (response.device_id && this.deviceIdElement) {
+      this.deviceIdElement.textContent = response.device_id
     }
   }
 
-  /**
-   * Check if pairing code is complete
-   */
-  private isPairingCodeComplete(): boolean {
-    return this.inputs.every((input) => input.value.length === 1)
+  private updatePairingCode(code: string): void {
+    if (!this.pairingCodeElement) return
+
+    const formatted = code.split('').join(' ')
+    this.pairingCodeElement.textContent = formatted
   }
 
-  /**
-   * Get pairing code
-   */
-  private getPairingCode(): string {
-    return this.inputs.map((input) => input.value).join('')
-  }
+  private setExpiry(response: PairingCodeResponse): void {
+    if (response.expires_at) {
+      const parsed = Date.parse(response.expires_at)
+      if (!Number.isNaN(parsed)) {
+        this.expiresAt = parsed
+        return
+      }
+    }
 
-  /**
-   * Submit pairing
-   */
-  private async submitPairing(): Promise<void> {
-    const code = this.getPairingCode()
-
-    if (!this.isPairingCodeComplete()) {
-      this.showStatus('Please enter all 6 characters', 'error')
+    if (response.expires_in) {
+      this.expiresAt = Date.now() + response.expires_in * 1000
       return
     }
 
-    this.showStatus('Pairing device...', '')
-    this.setInputsEnabled(false)
+    this.expiresAt = undefined
+  }
 
-    if (this.pairButton) {
-      this.pairButton.disabled = true
-      this.pairButton.textContent = 'Pairing...'
+  private startStatusPolling(): void {
+    if (this.statusPollTimer) return
+
+    this.statusPollTimer = window.setInterval(() => {
+      this.refreshPairingStatus().catch((error) => {
+        console.error('[Pairing] Status poll failed:', error)
+      })
+    }, 5000)
+  }
+
+  private stopStatusPolling(): void {
+    if (this.statusPollTimer) {
+      window.clearInterval(this.statusPollTimer)
+      this.statusPollTimer = undefined
+    }
+  }
+
+  private startExpiryTimer(): void {
+    this.stopExpiryTimer()
+    this.updateExpiryDisplay()
+
+    this.expiryTimer = window.setInterval(() => {
+      this.updateExpiryDisplay()
+    }, 1000)
+  }
+
+  private stopExpiryTimer(): void {
+    if (this.expiryTimer) {
+      window.clearInterval(this.expiryTimer)
+      this.expiryTimer = undefined
+    }
+  }
+
+  private updateExpiryDisplay(): void {
+    if (!this.pairingExpiryElement) return
+
+    if (!this.expiresAt) {
+      this.pairingExpiryElement.textContent = 'Expires in --:--'
+      return
     }
 
-    try {
-      const response = await window.hexmon.submitPairingCode(code)
-      this.showStatus(`Successfully paired! Device ID: ${response.device_id}`, 'success')
-
-      // Reload after successful pairing
-      setTimeout(() => {
-        window.location.reload()
-      }, 2000)
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Pairing failed'
-      this.showStatus(errorMessage, 'error')
-      this.setInputsEnabled(true)
-
-      if (this.pairButton) {
-        this.pairButton.disabled = false
-        this.pairButton.textContent = 'Pair Device'
-      }
+    const remainingMs = this.expiresAt - Date.now()
+    if (remainingMs <= 0) {
+      this.pairingExpiryElement.textContent = 'Code expired, requesting a new one...'
+      this.requestPairingCode(true).catch((error) => {
+        console.error('[Pairing] Failed to refresh expired code:', error)
+      })
+      return
     }
+
+    const totalSeconds = Math.floor(remainingMs / 1000)
+    const minutes = Math.floor(totalSeconds / 60)
+    const seconds = totalSeconds % 60
+    this.pairingExpiryElement.textContent = `Expires in ${minutes}:${seconds.toString().padStart(2, '0')}`
   }
 
   /**
@@ -226,13 +342,9 @@ class PairingScreen {
     this.statusElement.className = `pairing-status ${type}`
   }
 
-  /**
-   * Enable/disable inputs
-   */
-  private setInputsEnabled(enabled: boolean): void {
-    this.inputs.forEach((input) => {
-      input.disabled = !enabled
-    })
+  private enableCompleteButton(enabled: boolean): void {
+    if (!this.completeButton) return
+    this.completeButton.disabled = !enabled
   }
 
   /**
@@ -274,6 +386,24 @@ class PairingScreen {
       </li>
     `
   }
+
+  private getAspectRatio(width: number, height: number): string {
+    const divisor = this.getGreatestCommonDivisor(width, height)
+    return `${Math.round(width / divisor)}:${Math.round(height / divisor)}`
+  }
+
+  private getGreatestCommonDivisor(a: number, b: number): number {
+    let x = Math.abs(a)
+    let y = Math.abs(b)
+
+    while (y !== 0) {
+      const temp = y
+      y = x % y
+      x = temp
+    }
+
+    return x || 1
+  }
 }
 
 // Initialize pairing screen when DOM is ready
@@ -284,4 +414,3 @@ if (document.readyState === 'loading') {
 } else {
   new PairingScreen()
 }
-

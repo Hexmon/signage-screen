@@ -4,13 +4,19 @@
  */
 
 import * as os from 'os'
-import { app } from 'electron'
+import { app, screen } from 'electron'
 import { getLogger } from '../../common/logger'
 import { getConfigManager } from '../../common/config'
-import { DeviceInfo, PairingRequest, PairingResponse } from '../../common/types'
+import {
+  DeviceInfo,
+  PairingCodeRequest,
+  PairingCodeResponse,
+  PairingRequest,
+  PairingResponse,
+  PairingStatusResponse,
+} from '../../common/types'
 import { getCertificateManager } from './cert-manager'
 import { getHttpClient } from './network/http-client'
-import { getWebSocketClient } from './network/websocket-client'
 
 const logger = getLogger('pairing-service')
 
@@ -26,6 +32,8 @@ export interface NetworkDiagnostics {
 export class PairingService {
   private isPaired = false
   private deviceId?: string
+  private lastPairingCode?: string
+  private pairingExpiresAt?: string
 
   constructor() {
     this.loadPairingStatus()
@@ -37,7 +45,8 @@ export class PairingService {
   private loadPairingStatus(): void {
     const config = getConfigManager().getConfig()
     this.deviceId = config.deviceId
-    this.isPaired = !!this.deviceId && this.deviceId.length > 0
+    const certManager = getCertificateManager()
+    this.isPaired = Boolean(this.deviceId && certManager.areCertificatesPresent())
 
     logger.info({ isPaired: this.isPaired, deviceId: this.deviceId }, 'Pairing status loaded')
   }
@@ -88,18 +97,21 @@ export class PairingService {
 
       // Generate CSR
       const certManager = getCertificateManager()
-      const csr = await certManager.generateCSR(deviceInfo)
+      const csr = await certManager.generateCSR(deviceInfo, {
+        commonName: deviceInfo.deviceId || this.deviceId || deviceInfo.hostname,
+      })
 
       // Prepare pairing request
       const request: PairingRequest = {
         pairing_code: pairingCode,
         csr,
-        device_info: deviceInfo,
       }
 
       // Submit to backend
       const httpClient = getHttpClient()
-      const response = await httpClient.post<PairingResponse>('/v1/device-pairing/complete', request)
+      const response = await httpClient.post<PairingResponse>('/api/v1/device-pairing/complete', request, {
+        mtls: false,
+      })
 
       if (response.success === false) {
         throw new Error('Pairing request was rejected by the server')
@@ -114,6 +126,52 @@ export class PairingService {
       logger.error({ error, pairingCode }, 'Pairing failed')
       throw error
     }
+  }
+
+  /**
+   * Fetch pairing status from backend
+   */
+  async fetchPairingStatus(): Promise<PairingStatusResponse> {
+    const deviceId = this.deviceId
+
+    if (!deviceId) {
+      return {
+        device_id: '',
+        paired: false,
+        screen: null,
+      }
+    }
+
+    const httpClient = getHttpClient()
+    const status = await httpClient.get<PairingStatusResponse>(
+      `/api/v1/device-pairing/status?device_id=${encodeURIComponent(deviceId)}`,
+      { mtls: false }
+    )
+
+    this.updatePairingState(status.device_id, status.paired)
+    return status
+  }
+
+  /**
+   * Request a new pairing code from backend
+   */
+  async requestPairingCode(overrides: Partial<PairingCodeRequest> = {}): Promise<PairingCodeResponse> {
+    const httpClient = getHttpClient()
+    const payload = this.buildPairingCodeRequest(overrides)
+    const response = await httpClient.post<PairingCodeResponse>('/api/v1/device-pairing/request', payload, {
+      mtls: false,
+    })
+
+    if (response.device_id) {
+      this.updatePairingState(response.device_id, false)
+    }
+
+    if (response.pairing_code) {
+      this.lastPairingCode = response.pairing_code
+    }
+    this.pairingExpiresAt = response.expires_at
+
+    return response
   }
 
   /**
@@ -160,8 +218,6 @@ export class PairingService {
       // Enable mTLS on clients when certificates are provided
       if (hasCertificates) {
         httpClient.enableMTLS()
-        const wsClient = getWebSocketClient()
-        wsClient.enableMTLS()
         logger.info('mTLS enabled from pairing response')
       } else {
         logger.warn('Pairing response did not include certificates, keeping mTLS disabled')
@@ -172,6 +228,86 @@ export class PairingService {
       logger.error({ error }, 'Failed to complete pairing')
       throw error
     }
+  }
+
+  private updatePairingState(deviceId: string, paired: boolean): void {
+    if (deviceId && deviceId !== this.deviceId) {
+      const config = getConfigManager()
+      config.updateConfig({
+        deviceId,
+      })
+      this.deviceId = deviceId
+    }
+
+    const certManager = getCertificateManager()
+    this.isPaired = paired && certManager.areCertificatesPresent()
+  }
+
+  private buildPairingCodeRequest(overrides: Partial<PairingCodeRequest> = {}): PairingCodeRequest {
+    const display = screen.getPrimaryDisplay()
+    const width = display.workAreaSize.width
+    const height = display.workAreaSize.height
+    const orientation = width >= height ? 'landscape' : 'portrait'
+
+    const base: PairingCodeRequest = {
+      device_label: os.hostname(),
+      width,
+      height,
+      aspect_ratio: this.getAspectRatio(width, height),
+      orientation,
+      model: process.env['HEXMON_DEVICE_MODEL'] || os.type(),
+      codecs: this.getSupportedCodecs(),
+      device_info: {
+        os: `${os.platform()} ${os.release()}`,
+      },
+    }
+
+    return {
+      ...base,
+      ...overrides,
+      device_info: {
+        ...base.device_info,
+        ...overrides.device_info,
+      },
+    }
+  }
+
+  private getSupportedCodecs(): string[] {
+    const value = process.env['HEXMON_DEVICE_CODECS']
+    if (!value) {
+      return ['h264']
+    }
+
+    return value
+      .split(',')
+      .map((codec) => codec.trim())
+      .filter((codec) => codec.length > 0)
+  }
+
+  private getAspectRatio(width: number, height: number): string {
+    const divisor = this.getGreatestCommonDivisor(width, height)
+    return `${Math.round(width / divisor)}:${Math.round(height / divisor)}`
+  }
+
+  getLastPairingCode(): string | undefined {
+    return this.lastPairingCode
+  }
+
+  getPairingExpiry(): string | undefined {
+    return this.pairingExpiresAt
+  }
+
+  private getGreatestCommonDivisor(a: number, b: number): number {
+    let x = Math.abs(a)
+    let y = Math.abs(b)
+
+    while (y !== 0) {
+      const temp = y
+      y = x % y
+      x = temp
+    }
+
+    return x || 1
   }
 
   /**
@@ -217,14 +353,7 @@ export class PairingService {
       logger.warn({ error }, 'API reachability test failed')
     }
 
-    try {
-      // Test WebSocket reachability
-      const wsClient = getWebSocketClient()
-      diagnostics.wsReachable = wsClient.isConnected()
-      logger.debug({ wsReachable: diagnostics.wsReachable }, 'WebSocket reachability test completed')
-    } catch (error) {
-      logger.warn({ error }, 'WebSocket reachability test failed')
-    }
+    diagnostics.wsReachable = false
 
     logger.info({ diagnostics }, 'Network diagnostics completed')
     return diagnostics

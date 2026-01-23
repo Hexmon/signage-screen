@@ -21,8 +21,9 @@ const DEFAULT_KEY_PATH = process.env['HEXMON_MTLS_KEY_PATH'] || path.join(DEFAUL
 const DEFAULT_CA_PATH = process.env['HEXMON_MTLS_CA_PATH'] || path.join(DEFAULT_CERT_DIR, 'ca.crt')
 
 const DEFAULT_CONFIG: AppConfig = {
-  apiBase: process.env['HEXMON_API_BASE'] || 'https://api.hexmon.local',
-  wsUrl: process.env['HEXMON_WS_URL'] || 'wss://api.hexmon.local/ws',
+  apiBase:
+    process.env['HEXMON_API_BASE'] || (isDevelopment ? 'http://localhost:3000' : 'https://api.hexmon.local'),
+  wsUrl: process.env['HEXMON_WS_URL'] || (isDevelopment ? 'ws://localhost:3000/ws' : 'wss://api.hexmon.local/ws'),
   deviceId: process.env['HEXMON_DEVICE_ID'] || '',
   mtls: {
     enabled: process.env['HEXMON_MTLS_ENABLED'] === 'true',
@@ -39,10 +40,11 @@ const DEFAULT_CONFIG: AppConfig = {
     bandwidthBudgetMbps: parseInt(process.env['HEXMON_CACHE_BANDWIDTH_BUDGET_MBPS'] || '50', 10),
   },
   intervals: {
-    heartbeatMs: parseInt(process.env['HEXMON_INTERVAL_HEARTBEAT_MS'] || '60000', 10), // 1 minute
+    heartbeatMs: parseInt(process.env['HEXMON_INTERVAL_HEARTBEAT_MS'] || '30000', 10), // 30 seconds
     commandPollMs: parseInt(process.env['HEXMON_INTERVAL_COMMAND_POLL_MS'] || '30000', 10), // 30 seconds
     schedulePollMs: parseInt(process.env['HEXMON_INTERVAL_SCHEDULE_POLL_MS'] || '300000', 10), // 5 minutes
     healthCheckMs: parseInt(process.env['HEXMON_INTERVAL_HEALTH_CHECK_MS'] || '60000', 10), // 1 minute
+    screenshotMs: parseInt(process.env['HEXMON_INTERVAL_SCREENSHOT_MS'] || '300000', 10), // 5 minutes
   },
   log: {
     level: (process.env['HEXMON_LOG_LEVEL'] as AppConfig['log']['level']) || 'info',
@@ -201,6 +203,15 @@ export class ConfigManager {
     // Validate intervals
     if (this.config.intervals.heartbeatMs < 10000) {
       errors.push('intervals.heartbeatMs must be at least 10 seconds')
+    }
+    if (this.config.intervals.commandPollMs < 5000) {
+      errors.push('intervals.commandPollMs must be at least 5 seconds')
+    }
+    if (this.config.intervals.schedulePollMs < 10000) {
+      errors.push('intervals.schedulePollMs must be at least 10 seconds')
+    }
+    if (this.config.intervals.screenshotMs < 10000) {
+      errors.push('intervals.screenshotMs must be at least 10 seconds')
     }
 
     // Validate mTLS paths if enabled

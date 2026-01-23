@@ -1,9 +1,9 @@
 {
-  "apiBase": "https://api.hexmon.local",
-  "wsUrl": "wss://api.hexmon.local/ws",
+  "apiBase": "http://localhost:3000",
+  "wsUrl": "ws://localhost:3000/ws",
   "deviceId": "",
   "mtls": {
-    "enabled": true,
+    "enabled": false,
     "certPath": "/var/lib/hexmon/certs/client.crt",
     "keyPath": "/var/lib/hexmon/certs/client.key",
     "caPath": "/var/lib/hexmon/certs/ca.crt",
@@ -17,10 +17,11 @@
     "bandwidthBudgetMbps": 50
   },
   "intervals": {
-    "heartbeatMs": 60000,
+    "heartbeatMs": 30000,
     "commandPollMs": 30000,
     "schedulePollMs": 300000,
-    "healthCheckMs": 60000
+    "healthCheckMs": 60000,
+    "screenshotMs": 300000
   },
   "log": {
     "level": "info",
@@ -48,4 +49,3 @@
     "sandbox": true
   }
 }
-

@@ -226,7 +226,7 @@ export class ProofOfPlayService {
             ...event,
             device_id: event.device_id || deviceId,
           }
-          await httpClient.post('/v1/device/proof-of-play', payload)
+          await httpClient.post('/api/v1/device/proof-of-play', payload)
         } catch (error) {
           logger.error({ error, event }, 'Failed to flush PoP event')
           failedEvents.push(event)

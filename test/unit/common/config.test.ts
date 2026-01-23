@@ -21,15 +21,16 @@ describe('Config Manager', () => {
       apiBase: 'https://api-test.hexmon.com',
       wsUrl: 'wss://api-test.hexmon.com/ws',
       deviceId: 'test-device',
-      logLevel: 'info',
       cache: {
         path: path.join(tempDir, 'cache'),
         maxBytes: 1073741824,
       },
       intervals: {
         heartbeatMs: 300000,
-        schedulePollMs: 300000,
         commandPollMs: 30000,
+        schedulePollMs: 300000,
+        healthCheckMs: 60000,
+        screenshotMs: 300000,
       },
     }
 
@@ -82,7 +83,7 @@ describe('Config Manager', () => {
       const configManager = getConfigManager()
       const config = configManager.getConfig()
 
-      expect(config.logLevel).to.exist
+      expect(config.log.level).to.exist
       expect(config.intervals).to.exist
     })
   })
@@ -185,4 +186,3 @@ describe('Config Manager', () => {
     })
   })
 })
-

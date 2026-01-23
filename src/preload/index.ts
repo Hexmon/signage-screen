@@ -4,7 +4,14 @@
  */
 
 import { contextBridge, ipcRenderer } from 'electron'
-import type { HealthStatus, DiagnosticsInfo, PairingResponse } from '../common/types'
+import type {
+  HealthStatus,
+  DiagnosticsInfo,
+  PairingCodeRequest,
+  PairingCodeResponse,
+  PairingResponse,
+  PairingStatusResponse,
+} from '../common/types'
 
 // Define the API that will be exposed to the renderer
 export interface HexmonAPI {
@@ -12,10 +19,14 @@ export interface HexmonAPI {
   onPlaybackUpdate: (callback: (data: unknown) => void) => void
   onMediaChange: (callback: (data: unknown) => void) => void
   onEmergencyOverride: (callback: (data: unknown) => void) => void
+  onPlayerStatus: (callback: (data: unknown) => void) => void
 
   // Pairing
   submitPairingCode: (code: string) => Promise<PairingResponse>
-  getPairingStatus: () => Promise<{ paired: boolean; deviceId?: string }>
+  getPairingStatus: () => Promise<PairingStatusResponse>
+  requestPairingCode: (payload?: Partial<PairingCodeRequest>) => Promise<PairingCodeResponse>
+  completePairing: (code?: string) => Promise<PairingResponse>
+  getDeviceInfo: () => Promise<unknown>
 
   // Diagnostics
   getDiagnostics: () => Promise<DiagnosticsInfo>
@@ -23,6 +34,7 @@ export interface HexmonAPI {
 
   // Health
   getHealth: () => Promise<HealthStatus>
+  getPlayerStatus: () => Promise<unknown>
 
   // Commands
   executeCommand: (command: string, payload?: unknown) => Promise<unknown>
@@ -50,13 +62,29 @@ contextBridge.exposeInMainWorld('hexmon', {
     ipcRenderer.on('emergency-override', (_event, data) => callback(data))
   },
 
-  // Pairing
-  submitPairingCode: async (code: string): Promise<PairingResponse> => {
-    return await ipcRenderer.invoke('submit-pairing', code)
+  onPlayerStatus: (callback: (data: unknown) => void) => {
+    ipcRenderer.on('player-status', (_event, data) => callback(data))
   },
 
-  getPairingStatus: async (): Promise<{ paired: boolean; deviceId?: string }> => {
-    return await ipcRenderer.invoke('get-pairing-status')
+  // Pairing
+  submitPairingCode: async (code: string): Promise<PairingResponse> => {
+    return await ipcRenderer.invoke('pairing-complete', code)
+  },
+
+  getPairingStatus: async (): Promise<PairingStatusResponse> => {
+    return await ipcRenderer.invoke('pairing-status')
+  },
+
+  requestPairingCode: async (payload?: Partial<PairingCodeRequest>): Promise<PairingCodeResponse> => {
+    return await ipcRenderer.invoke('pairing-request', payload)
+  },
+
+  completePairing: async (code?: string): Promise<PairingResponse> => {
+    return await ipcRenderer.invoke('pairing-complete', code)
+  },
+
+  getDeviceInfo: async (): Promise<unknown> => {
+    return await ipcRenderer.invoke('get-device-info')
   },
 
   // Diagnostics
@@ -71,6 +99,10 @@ contextBridge.exposeInMainWorld('hexmon', {
   // Health
   getHealth: async (): Promise<HealthStatus> => {
     return await ipcRenderer.invoke('get-health')
+  },
+
+  getPlayerStatus: async (): Promise<unknown> => {
+    return await ipcRenderer.invoke('get-player-status')
   },
 
   // Commands
@@ -102,4 +134,3 @@ contextBridge.exposeInMainWorld('versions', {
 
 // Log that preload script loaded
 console.log('Preload script loaded successfully')
-
