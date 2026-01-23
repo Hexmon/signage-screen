@@ -8,6 +8,7 @@ console.log('NODE_ENV:', process.env['NODE_ENV'])
 console.log('__dirname:', __dirname)
 
 import { app, BrowserWindow, screen } from 'electron'
+import * as fs from 'fs'
 import * as path from 'path'
 import { getConfigManager } from '../common/config'
 import { getLogger } from '../common/logger'
@@ -85,13 +86,28 @@ function createWindow(): void {
   // Main process is at dist/main/main/index.js, renderer is at dist/renderer/index.html
   const rendererPath = path.join(__dirname, '../../renderer/index.html')
   logger.info({ rendererPath }, 'Loading renderer HTML')
-  mainWindow.loadFile(rendererPath)
-    .then(() => {
-      logger.info('Renderer HTML loaded successfully')
-    })
-    .catch((error) => {
-      logger.error({ error, rendererPath }, 'Failed to load renderer')
-    })
+
+  if (!fs.existsSync(rendererPath)) {
+    logger.error(
+      {
+        rendererPath,
+        hint: 'Run `npm run prepare:dev` or `npm run build` before launching Electron.',
+      },
+      'Renderer HTML not found'
+    )
+    const message = encodeURIComponent(
+      `Renderer not built.\n\nExpected:\n${rendererPath}\n\nRun:\n- npm run prepare:dev\nor\n- npm run build`
+    )
+    void mainWindow.loadURL(`data:text/plain,${message}`)
+  } else {
+    mainWindow.loadFile(rendererPath)
+      .then(() => {
+        logger.info('Renderer HTML loaded successfully')
+      })
+      .catch((error) => {
+        logger.error({ error, rendererPath }, 'Failed to load renderer')
+      })
+  }
 
   // Show window when ready
   mainWindow.once('ready-to-show', () => {

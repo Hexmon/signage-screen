@@ -4,9 +4,15 @@
 
 const esbuild = require('esbuild')
 const path = require('path')
+const fs = require('fs')
 
 async function build() {
   try {
+    const distRendererDir = path.join(__dirname, '../dist/renderer')
+    if (!fs.existsSync(distRendererDir)) {
+      fs.mkdirSync(distRendererDir, { recursive: true })
+    }
+
     // Bundle player.js
     await esbuild.build({
       entryPoints: [path.join(__dirname, '../src/renderer/player.ts')],
@@ -51,4 +57,3 @@ async function build() {
 }
 
 build()
-
