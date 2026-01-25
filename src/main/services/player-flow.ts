@@ -14,6 +14,7 @@ import { getPlaybackEngine } from './playback/playback-engine'
 import { getTelemetryService } from './telemetry/telemetry-service'
 import { getCommandProcessor } from './command-processor'
 import { getScreenshotService } from './screenshot-service'
+import { getDefaultMediaService } from './settings/default-media-service'
 
 const logger = getLogger('player-flow')
 
@@ -39,6 +40,9 @@ export class PlayerFlow extends EventEmitter {
 
     const screenshotService = getScreenshotService()
     screenshotService.initialize(mainWindow)
+
+    const defaultMediaService = getDefaultMediaService()
+    defaultMediaService.initialize(mainWindow)
   }
 
   async start(): Promise<void> {
@@ -146,6 +150,7 @@ export class PlayerFlow extends EventEmitter {
     const commandProcessor = getCommandProcessor()
     const snapshotManager = getSnapshotManager()
     const playbackEngine = getPlaybackEngine()
+    const defaultMediaService = getDefaultMediaService()
 
     if (this.mainWindow && this.mainWindow.webContents.isLoading()) {
       await new Promise<void>((resolve) => {
@@ -161,6 +166,7 @@ export class PlayerFlow extends EventEmitter {
     await telemetryService.start()
 
     snapshotManager.start()
+    defaultMediaService.start()
     try {
       await snapshotManager.refreshSnapshot()
       const playlist = snapshotManager.getCurrentPlaylist()
@@ -186,6 +192,7 @@ export class PlayerFlow extends EventEmitter {
     const commandProcessor = getCommandProcessor()
     const snapshotManager = getSnapshotManager()
     const playbackEngine = getPlaybackEngine()
+    const defaultMediaService = getDefaultMediaService()
 
     commandProcessor.stop()
     telemetryService.stop().catch((error) => {
@@ -193,6 +200,7 @@ export class PlayerFlow extends EventEmitter {
     })
     snapshotManager.stop()
     playbackEngine.stop()
+    defaultMediaService.stop()
 
     this.stopScreenshotLoop()
     this.playbackStarted = false

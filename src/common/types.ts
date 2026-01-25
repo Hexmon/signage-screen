@@ -38,6 +38,7 @@ export interface IntervalsConfig {
   heartbeatMs: number
   commandPollMs: number
   schedulePollMs: number
+  defaultMediaPollMs: number
   healthCheckMs: number
   screenshotMs: number
 }
@@ -73,6 +74,22 @@ export interface SecurityConfig {
 
 export type MediaType = 'image' | 'video' | 'pdf' | 'url' | 'office'
 export type FitMode = 'contain' | 'cover' | 'stretch'
+
+// CMS default media types
+export type DefaultMediaType = 'IMAGE' | 'VIDEO' | 'DOCUMENT'
+
+export interface DefaultMediaItem {
+  id: string
+  name: string
+  type: DefaultMediaType
+  source_content_type?: string
+  media_url: string
+}
+
+export interface DefaultMediaResponse {
+  media_id: string | null
+  media: DefaultMediaItem | null
+}
 
 // Player state machine
 export type PlayerState =

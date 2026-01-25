@@ -43,6 +43,7 @@ const DEFAULT_CONFIG: AppConfig = {
     heartbeatMs: parseInt(process.env['HEXMON_INTERVAL_HEARTBEAT_MS'] || '30000', 10), // 30 seconds
     commandPollMs: parseInt(process.env['HEXMON_INTERVAL_COMMAND_POLL_MS'] || '30000', 10), // 30 seconds
     schedulePollMs: parseInt(process.env['HEXMON_INTERVAL_SCHEDULE_POLL_MS'] || '300000', 10), // 5 minutes
+    defaultMediaPollMs: parseInt(process.env['HEXMON_INTERVAL_DEFAULT_MEDIA_POLL_MS'] || '300000', 10), // 5 minutes
     healthCheckMs: parseInt(process.env['HEXMON_INTERVAL_HEALTH_CHECK_MS'] || '60000', 10), // 1 minute
     screenshotMs: parseInt(process.env['HEXMON_INTERVAL_SCREENSHOT_MS'] || '300000', 10), // 5 minutes
   },
@@ -209,6 +210,9 @@ export class ConfigManager {
     }
     if (this.config.intervals.schedulePollMs < 10000) {
       errors.push('intervals.schedulePollMs must be at least 10 seconds')
+    }
+    if (this.config.intervals.defaultMediaPollMs < 10000) {
+      errors.push('intervals.defaultMediaPollMs must be at least 10 seconds')
     }
     if (this.config.intervals.screenshotMs < 10000) {
       errors.push('intervals.screenshotMs must be at least 10 seconds')

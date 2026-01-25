@@ -240,6 +240,11 @@ function setupIPCHandlers(): void {
     return getPlayerFlow().getStatus()
   })
 
+  ipcMain.handle('default-media:get', async (_event: any, options?: { refresh?: boolean }) => {
+    const { getDefaultMediaService } = await import('./services/settings/default-media-service')
+    return await getDefaultMediaService().getDefaultMedia(options)
+  })
+
   ipcMain.handle('get-player-state', async () => {
     const { getPlayerFlow } = await import('./services/player-flow')
     return getPlayerFlow().getState()

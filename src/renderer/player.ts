@@ -3,13 +3,18 @@
  * Handles media rendering and transitions in the renderer process
  */
 
-import { FitMode, PlayerStatus, TimelineItem } from '../common/types'
+import { DefaultMediaResponse, FitMode, PlayerStatus, TimelineItem } from '../common/types'
 import './types'
+import { DefaultMediaPlayer } from './default-media-player'
+import { checkMediaCompatibility, CompatResult } from '../common/media-compat'
 
 class Player {
   private canvas: HTMLCanvasElement | null = null
   private currentElement?: HTMLElement
   private mediaContainer: HTMLElement | null = null
+  private defaultMediaContainer: HTMLElement | null = null
+  private defaultMediaPlayer?: DefaultMediaPlayer
+  private activeSource: 'schedule' | 'default' | 'none' = 'schedule'
   private statusOverlay: HTMLElement | null = null
   private statusConnection: HTMLElement | null = null
   private statusDeviceId: HTMLElement | null = null
@@ -20,6 +25,7 @@ class Player {
 
   constructor() {
     this.initializeElements()
+    this.setupDefaultMedia()
     this.setupIPC()
     this.log('info', 'Player initialized')
   }
@@ -30,6 +36,7 @@ class Player {
   private initializeElements(): void {
     this.canvas = document.getElementById('media-canvas') as HTMLCanvasElement
     this.mediaContainer = document.getElementById('playback-container')
+    this.defaultMediaContainer = document.getElementById('default-media-container')
     this.statusOverlay = document.getElementById('status-overlay')
     this.statusConnection = document.getElementById('status-connection')
     this.statusDeviceId = document.getElementById('status-device-id')
@@ -43,6 +50,35 @@ class Player {
 
       // Handle window resize
       window.addEventListener('resize', () => this.resizeCanvas())
+    }
+  }
+
+  private setupDefaultMedia(): void {
+    if (!this.defaultMediaContainer) {
+      return
+    }
+
+    this.defaultMediaPlayer = new DefaultMediaPlayer(this.defaultMediaContainer, {
+      onRefreshRequested: (reason) => {
+        this.refreshDefaultMedia(reason).catch((error) => {
+          this.log('warn', 'Default media refresh failed', { reason, error: error.message })
+        })
+      },
+      debugOverlay: false,
+    })
+
+    this.loadDefaultMediaConfig().catch((error) => {
+      this.log('warn', 'Failed to load default media config', { error: error.message })
+    })
+
+    this.refreshDefaultMedia('initial').catch((error) => {
+      this.log('warn', 'Initial default media fetch failed', { error: error.message })
+    })
+
+    if (window.hexmon && window.hexmon.onDefaultMediaChanged) {
+      window.hexmon.onDefaultMediaChanged((data: any) => {
+        this.defaultMediaPlayer?.setMedia(data as DefaultMediaResponse)
+      })
     }
   }
 
@@ -64,6 +100,7 @@ class Player {
     if (window.hexmon && window.hexmon.onMediaChange) {
       window.hexmon.onMediaChange((data: any) => {
         this.log('debug', 'Received play-media event', data)
+        this.setActiveSource('schedule')
         this.playMedia(data.item).catch((error) => {
           this.log('error', 'Failed to play media', { error: error.message })
           this.showFallback(error.message)
@@ -86,16 +123,66 @@ class Player {
 
     if (window.hexmon && window.hexmon.onPlayerStatus) {
       window.hexmon.onPlayerStatus((data: any) => {
-        this.updateStatusOverlay(data as PlayerStatus)
+        const status = data as PlayerStatus
+        this.updateStatusOverlay(status)
+        this.updateContentSource(status)
       })
     }
 
     if (window.hexmon && window.hexmon.getPlayerStatus) {
       window.hexmon.getPlayerStatus().then((status: any) => {
-        this.updateStatusOverlay(status as PlayerStatus)
+        const typedStatus = status as PlayerStatus
+        this.updateStatusOverlay(typedStatus)
+        this.updateContentSource(typedStatus)
       }).catch(() => {
         // ignore initial status failures
       })
+    }
+  }
+
+  private async refreshDefaultMedia(reason: string): Promise<void> {
+    if (!window.hexmon || !window.hexmon.getDefaultMedia) {
+      return
+    }
+
+    const data = await window.hexmon.getDefaultMedia({ refresh: true })
+    this.defaultMediaPlayer?.setMedia(data as DefaultMediaResponse)
+    this.log('debug', 'Default media refreshed', { reason })
+  }
+
+  private async loadDefaultMediaConfig(): Promise<void> {
+    if (!window.hexmon || !window.hexmon.getConfig) {
+      return
+    }
+
+    const config = await window.hexmon.getConfig()
+    const logLevel = (config as any)?.log?.level
+    const debugEnabled = logLevel === 'debug' || logLevel === 'trace'
+
+    this.defaultMediaPlayer?.setDebugOverlayEnabled(debugEnabled)
+  }
+
+  private updateContentSource(status: PlayerStatus): void {
+    if (status.state === 'NEED_PAIRING' || status.state === 'PAIRING_REQUESTED' || status.state === 'WAITING_CONFIRMATION') {
+      this.setActiveSource('none')
+      return
+    }
+
+    const shouldShowDefault = status.state === 'OFFLINE_FALLBACK' || status.mode === 'offline' || status.mode === 'empty'
+    this.setActiveSource(shouldShowDefault ? 'default' : 'schedule')
+  }
+
+  private setActiveSource(source: 'schedule' | 'default' | 'none'): void {
+    if (this.activeSource === source) {
+      return
+    }
+
+    this.activeSource = source
+
+    if (source === 'default') {
+      this.defaultMediaPlayer?.show()
+    } else {
+      this.defaultMediaPlayer?.hide()
     }
   }
 
@@ -106,6 +193,30 @@ class Player {
     this.log('info', 'Playing media', { itemId: item.id, type: item.type })
 
     try {
+      const sourceContentType =
+        typeof item.meta?.['source_content_type'] === 'string' ? (item.meta?.['source_content_type'] as string) : undefined
+      const mediaName = typeof item.meta?.['name'] === 'string' ? (item.meta?.['name'] as string) : undefined
+      const mediaUrl = item.localUrl || item.remoteUrl || item.url || item.localPath
+
+      const compat = checkMediaCompatibility({
+        type: item.type,
+        source_content_type: sourceContentType,
+        name: mediaName,
+        media_url: mediaUrl,
+      })
+
+      if (compat.status === 'PLAYABLE_NOW') {
+        this.log('debug', 'Media compatibility check', { itemId: item.id, compat })
+      } else if (compat.status === 'ACCEPTED_BUT_NOT_SUPPORTED_YET') {
+        this.log('warn', 'Media not supported yet', { itemId: item.id, compat })
+        this.showCompatibilityPlaceholder(compat, item)
+        return
+      } else {
+        this.log('error', 'Media rejected by compatibility check', { itemId: item.id, compat })
+        this.showFallback(`Unsupported media: ${compat.reason}`)
+        return
+      }
+
       let element: HTMLElement
 
       switch (item.type) {
@@ -197,30 +308,19 @@ class Player {
   /**
    * Render PDF
    */
-  private async renderPDF(_item: TimelineItem): Promise<HTMLElement> {
-    const container = document.createElement('div')
-    container.style.position = 'absolute'
-    container.style.top = '0'
-    container.style.left = '0'
-    container.style.width = '100%'
-    container.style.height = '100%'
-    container.style.backgroundColor = '#fff'
-    container.style.overflow = 'hidden'
+  private async renderPDF(item: TimelineItem): Promise<HTMLElement> {
+    const iframe = document.createElement('iframe')
+    iframe.style.position = 'absolute'
+    iframe.style.top = '0'
+    iframe.style.left = '0'
+    iframe.style.width = '100%'
+    iframe.style.height = '100%'
+    iframe.style.border = '0'
+    iframe.style.backgroundColor = '#000'
 
-    // TODO: Integrate pdf.js for actual PDF rendering
-    // For now, show placeholder
-    const placeholder = document.createElement('div')
-    placeholder.style.display = 'flex'
-    placeholder.style.alignItems = 'center'
-    placeholder.style.justifyContent = 'center'
-    placeholder.style.width = '100%'
-    placeholder.style.height = '100%'
-    placeholder.style.fontSize = '24px'
-    placeholder.textContent = 'PDF Rendering (pdf.js integration needed)'
+    iframe.src = this.getMediaSource(item)
 
-    container.appendChild(placeholder)
-
-    return container
+    return iframe
   }
 
   /**
@@ -337,6 +437,46 @@ class Player {
     fallback.appendChild(msg)
 
     this.showElement(fallback)
+  }
+
+  private showCompatibilityPlaceholder(result: CompatResult, item: TimelineItem): void {
+    if (!this.mediaContainer) return
+
+    const container = document.createElement('div')
+    container.style.display = 'flex'
+    container.style.flexDirection = 'column'
+    container.style.alignItems = 'center'
+    container.style.justifyContent = 'center'
+    container.style.width = '100%'
+    container.style.height = '100%'
+    container.style.background = '#000'
+    container.style.color = '#fff'
+    container.style.textAlign = 'center'
+
+    const title = document.createElement('div')
+    title.textContent = 'Media playback not supported yet'
+    title.style.fontSize = '24px'
+    title.style.fontWeight = '600'
+    title.style.marginBottom = '10px'
+
+    const details = document.createElement('div')
+    details.style.fontSize = '14px'
+    details.style.opacity = '0.8'
+
+    const parts = [
+      `Kind: ${result.kind}`,
+      `Ext: ${result.normalizedExt || '-'}`,
+      `Mime: ${result.normalizedMime || '-'}`,
+      `Media: ${item.mediaId || item.id}`,
+    ]
+
+    details.textContent = parts.join(' | ')
+
+    container.appendChild(title)
+    container.appendChild(details)
+
+    this.showElement(container)
+    this.currentElement = container
   }
 
   private updateStatusOverlay(status: PlayerStatus): void {

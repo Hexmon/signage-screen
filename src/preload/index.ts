@@ -7,6 +7,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   HealthStatus,
   DiagnosticsInfo,
+  DefaultMediaResponse,
   PairingCodeRequest,
   PairingCodeResponse,
   PairingResponse,
@@ -35,6 +36,10 @@ export interface HexmonAPI {
   // Health
   getHealth: () => Promise<HealthStatus>
   getPlayerStatus: () => Promise<unknown>
+
+  // Default media
+  getDefaultMedia: (options?: { refresh?: boolean }) => Promise<DefaultMediaResponse>
+  onDefaultMediaChanged: (callback: (data: DefaultMediaResponse) => void) => () => void
 
   // Commands
   executeCommand: (command: string, payload?: unknown) => Promise<unknown>
@@ -103,6 +108,19 @@ contextBridge.exposeInMainWorld('hexmon', {
 
   getPlayerStatus: async (): Promise<unknown> => {
     return await ipcRenderer.invoke('get-player-status')
+  },
+
+  // Default media
+  getDefaultMedia: async (options?: { refresh?: boolean }): Promise<DefaultMediaResponse> => {
+    return await ipcRenderer.invoke('default-media:get', options)
+  },
+
+  onDefaultMediaChanged: (callback: (data: DefaultMediaResponse) => void) => {
+    const listener = (_event: any, data: DefaultMediaResponse) => callback(data)
+    ipcRenderer.on('default-media:changed', listener)
+    return () => {
+      ipcRenderer.removeListener('default-media:changed', listener)
+    }
   },
 
   // Commands

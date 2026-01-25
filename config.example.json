@@ -20,6 +20,7 @@
     "heartbeatMs": 30000,
     "commandPollMs": 30000,
     "schedulePollMs": 300000,
+    "defaultMediaPollMs": 300000,
     "healthCheckMs": 60000,
     "screenshotMs": 300000
   },
