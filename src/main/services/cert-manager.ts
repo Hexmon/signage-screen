@@ -291,7 +291,26 @@ export class CertificateManager {
 
   private async persistMetadata(): Promise<void> {
     const info = await this.getCertificateInfo()
+
     if (!info) {
+      try {
+        const certPem = fs.readFileSync(this.certPath, 'utf-8')
+        const fingerprint = crypto.createHash('sha256').update(certPem).digest('hex')
+        const now = new Date().toISOString()
+        const metadata: CertificateMetadata = {
+          fingerprint,
+          validFrom: now,
+          validTo: now,
+          subject: 'unknown',
+          issuer: 'unknown',
+          serialNumber: fingerprint,
+        }
+        await atomicWrite(this.metadataPath, JSON.stringify(metadata, null, 2))
+        fs.chmodSync(this.metadataPath, 0o600)
+        logger.warn('Certificate metadata fallback created from fingerprint')
+      } catch (error) {
+        logger.error({ error }, 'Failed to persist fallback certificate metadata')
+      }
       return
     }
 

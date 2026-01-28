@@ -10,6 +10,7 @@ import { getLogger } from '../../common/logger'
 import { getConfigManager } from '../../common/config'
 import { getHttpClient } from './network/http-client'
 import { getPairingService } from './pairing-service'
+import { getCertificateManager } from './cert-manager'
 import { getRequestQueue } from './network/request-queue'
 import { atomicWrite, ensureDir, generateId } from '../../common/utils'
 
@@ -89,6 +90,12 @@ export class ScreenshotService {
 
     if (!deviceId) {
       throw new Error('Device not paired')
+    }
+
+    const certManager = getCertificateManager()
+    const certMetadata = certManager.getCertificateMetadata()
+    if (!certMetadata?.serialNumber) {
+      throw new Error('Device certificate not available; re-pair device to upload screenshots')
     }
 
     logger.info({ filepath }, 'Uploading screenshot')

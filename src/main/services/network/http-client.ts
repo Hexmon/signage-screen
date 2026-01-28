@@ -57,6 +57,24 @@ export class HttpClient {
           config.httpsAgent = httpsAgent
         }
 
+        // Attach device identity header for device endpoints when available
+        if (this.isDeviceEndpoint(config.url || '')) {
+          try {
+            const certManager = getCertificateManager()
+            const metadata = certManager.getCertificateMetadata()
+            const info = metadata?.fingerprint ? null : await certManager.getCertificateInfo()
+            const fingerprint = metadata?.fingerprint || info?.fingerprint
+            if (fingerprint) {
+              config.headers = config.headers || {}
+              if (!(config.headers as any)['X-Device-Serial']) {
+                ;(config.headers as any)['X-Device-Serial'] = fingerprint
+              }
+            }
+          } catch (error) {
+            logger.warn({ error }, 'Failed to attach device identity header')
+          }
+        }
+
         logger.debug({ method: config.method, url: config.url }, 'HTTP request')
         return config
       },
@@ -109,6 +127,20 @@ export class HttpClient {
       return false
     }
 
+    return false
+  }
+
+  private isDeviceEndpoint(url: string): boolean {
+    if (!url) return false
+    if (url.startsWith('/api/v1/device')) return true
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      try {
+        const parsed = new URL(url)
+        return parsed.pathname.startsWith('/api/v1/device')
+      } catch {
+        return false
+      }
+    }
     return false
   }
 
