@@ -9,6 +9,7 @@ console.log('__dirname:', __dirname)
 
 import { app, BrowserWindow, screen } from 'electron'
 import * as fs from 'fs'
+import * as os from 'os'
 import * as path from 'path'
 import { getConfigManager } from '../common/config'
 import { getLogger } from '../common/logger'
@@ -182,6 +183,8 @@ async function initializeServices(): Promise<void> {
       throw new Error('Invalid configuration: ' + validation.errors.join(', '))
     }
 
+    await logBackendConnectivity()
+
     const { getPlayerFlow } = await import('./services/player-flow')
     const playerFlow = getPlayerFlow()
 
@@ -195,6 +198,70 @@ async function initializeServices(): Promise<void> {
     logger.fatal({ error }, 'Failed to initialize services')
     throw error
   }
+}
+
+async function logBackendConnectivity(): Promise<void> {
+  const appConfig = config.getConfig()
+  logger.info(
+    {
+      apiBase: appConfig.apiBase,
+      wsUrl: appConfig.wsUrl,
+      deviceId: appConfig.deviceId || 'unpaired',
+      configPath: config.getConfigPath(),
+    },
+    'Resolved backend configuration'
+  )
+
+  const networkAddresses = getNetworkAddresses()
+  if (networkAddresses.length > 0) {
+    logger.info({ addresses: networkAddresses }, 'Detected network interfaces')
+  }
+
+  try {
+    const { hostname } = new URL(appConfig.apiBase)
+    const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'
+    const isPrivateIp = isPrivateIpv4(hostname)
+    logger.info({ hostname, isLocalhost, isPrivateIp }, 'Backend host classification')
+  } catch (error) {
+    logger.warn({ error, apiBase: appConfig.apiBase }, 'Failed to parse backend URL')
+  }
+
+  const { getHttpClient } = await import('./services/network/http-client')
+  const httpClient = getHttpClient()
+  const result = await httpClient.checkConnectivityDetailed()
+
+  if (result.ok) {
+    logger.info({ endpoint: result.endpoint, status: result.status }, 'Backend reachable')
+  } else {
+    logger.error({ endpoint: result.endpoint, error: result.error }, 'Backend unreachable')
+  }
+}
+
+function getNetworkAddresses(): string[] {
+  const interfaces = os.networkInterfaces()
+  const addresses: string[] = []
+
+  for (const name of Object.keys(interfaces)) {
+    const iface = interfaces[name]
+    if (!iface) continue
+    for (const addr of iface) {
+      if (addr.family === 'IPv4' && !addr.internal) {
+        addresses.push(addr.address)
+      }
+    }
+  }
+
+  return addresses
+}
+
+function isPrivateIpv4(hostname: string): boolean {
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) return false
+  const [a, b] = hostname.split('.').map((part) => parseInt(part, 10))
+  if (Number.isNaN(a) || Number.isNaN(b)) return false
+  if (a === 10) return true
+  if (a === 172 && b >= 16 && b <= 31) return true
+  if (a === 192 && b === 168) return true
+  return false
 }
 
 /**

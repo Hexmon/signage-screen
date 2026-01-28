@@ -8,6 +8,15 @@ import * as os from 'os'
 import { AppConfig } from './types'
 
 const isDevelopment = process.env['NODE_ENV'] === 'development'
+const allowLocalhostFallback =
+  process.env['HEXMON_ALLOW_LOCALHOST_FALLBACK'] === 'true' ||
+  process.env['SIGNAGE_ALLOW_LOCALHOST'] === 'true' ||
+  isDevelopment
+const envApiBase = process.env['SIGNAGE_API_BASE_URL'] || process.env['API_BASE_URL']
+const envWsUrl = process.env['SIGNAGE_WS_URL'] || process.env['WS_URL']
+
+const DEFAULT_API_BASE = allowLocalhostFallback ? 'http://localhost:3000' : 'https://api.hexmon.local'
+const DEFAULT_WS_URL = allowLocalhostFallback ? 'ws://localhost:3000/ws' : 'wss://api.hexmon.local/ws'
 const homeDir = os.homedir() || '/tmp'
 
 const DEFAULT_CACHE_PATH =
@@ -21,9 +30,9 @@ const DEFAULT_KEY_PATH = process.env['HEXMON_MTLS_KEY_PATH'] || path.join(DEFAUL
 const DEFAULT_CA_PATH = process.env['HEXMON_MTLS_CA_PATH'] || path.join(DEFAULT_CERT_DIR, 'ca.crt')
 
 const DEFAULT_CONFIG: AppConfig = {
-  // Single source of truth for backend URLs is config.json.
-  apiBase: isDevelopment ? 'http://192.168.0.3:3000' : 'https://api.hexmon.local',
-  wsUrl: isDevelopment ? 'ws://192.168.0.3:3000/ws' : 'wss://api.hexmon.local/ws',
+  // Single source of truth for backend URLs is config.json (unless env overrides are set).
+  apiBase: DEFAULT_API_BASE,
+  wsUrl: DEFAULT_WS_URL,
   deviceId: process.env['HEXMON_DEVICE_ID'] || '',
   mtls: {
     enabled: process.env['HEXMON_MTLS_ENABLED'] === 'true',
@@ -106,13 +115,13 @@ export class ConfigManager {
         const fileConfig = JSON.parse(fileContent) as Partial<AppConfig>
         
         // Deep merge with defaults, environment variables take precedence
-        return this.mergeConfig(DEFAULT_CONFIG, fileConfig)
+        return this.applyEnvOverrides(this.mergeConfig(DEFAULT_CONFIG, fileConfig))
       }
     } catch (error) {
       console.error('Failed to load config file, using defaults:', error)
     }
 
-    return DEFAULT_CONFIG
+    return this.applyEnvOverrides(DEFAULT_CONFIG)
   }
 
   private mergeConfig(defaults: AppConfig, overrides: Partial<AppConfig>): AppConfig {
@@ -127,6 +136,37 @@ export class ConfigManager {
       power: { ...defaults.power, ...overrides.power },
       security: { ...defaults.security, ...overrides.security },
     }
+  }
+
+  private applyEnvOverrides(config: AppConfig): AppConfig {
+    const resolvedApiBase = this.normalizeUrl(envApiBase || config.apiBase)
+    const resolvedWsUrl = this.normalizeUrl(
+      envWsUrl || (envApiBase ? this.deriveWsUrl(resolvedApiBase) : config.wsUrl)
+    )
+
+    return {
+      ...config,
+      apiBase: resolvedApiBase,
+      wsUrl: resolvedWsUrl || config.wsUrl,
+    }
+  }
+
+  private deriveWsUrl(apiBase: string): string | null {
+    try {
+      const url = new URL(apiBase)
+      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+      url.pathname = '/ws'
+      url.search = ''
+      url.hash = ''
+      return url.toString().replace(/\/$/, '')
+    } catch {
+      return null
+    }
+  }
+
+  private normalizeUrl(value?: string | null): string {
+    if (!value) return ''
+    return value.replace(/\/+$/, '')
   }
 
   public getConfig(): AppConfig {

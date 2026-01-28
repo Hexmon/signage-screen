@@ -152,7 +152,8 @@ class PairingScreen {
     } catch (error) {
       console.error('[Pairing] Failed to check pairing status:', error)
       this.showPairingScreen()
-      this.showStatus('Unable to check pairing status. Retrying...', 'error')
+      const errorMessage = error instanceof Error ? error.message : 'Unable to check pairing status. Retrying...'
+      this.showStatus(errorMessage, 'error')
       return null
     }
   }

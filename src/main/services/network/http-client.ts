@@ -245,12 +245,55 @@ export class HttpClient {
    * Check connectivity
    */
   async checkConnectivity(): Promise<boolean> {
-    try {
-      await this.head('/api/v1/health')
-      return true
-    } catch (error) {
-      logger.warn('Connectivity check failed')
-      return false
+    const result = await this.checkConnectivityDetailed()
+    return result.ok
+  }
+
+  async checkConnectivityDetailed(): Promise<{
+    ok: boolean
+    baseURL: string
+    endpoint: string
+    status?: number
+    error?: string
+  }> {
+    const baseURL = this.client.defaults.baseURL || ''
+    const endpoints = ['/api/v1/health', '/health', '/api/v1/device-pairing?page=1&limit=1']
+    let lastError: string | undefined
+
+    for (const endpoint of endpoints) {
+      try {
+        const response = await this.client.get(endpoint, {
+          timeout: 5000,
+          validateStatus: () => true,
+          mtls: false,
+        })
+
+        if (response.status >= 200 && response.status < 300) {
+          return { ok: true, baseURL, endpoint, status: response.status }
+        }
+
+        if (endpoint.includes('health') && response.status === 404) {
+          lastError = `Health endpoint not found (${response.status})`
+          continue
+        }
+
+        if (response.status < 500) {
+          return { ok: true, baseURL, endpoint, status: response.status }
+        }
+
+        lastError = `Health check returned ${response.status}`
+      } catch (error: any) {
+        const code = error?.code ? ` (${error.code})` : ''
+        lastError = `${error?.message || 'Unknown network error'}${code}`
+      }
+    }
+
+    logger.warn({ baseURL, error: lastError }, 'Connectivity check failed')
+    return {
+      ok: false,
+      baseURL,
+      endpoint: endpoints[endpoints.length - 1],
+      error: lastError || 'Unknown network error',
     }
   }
 

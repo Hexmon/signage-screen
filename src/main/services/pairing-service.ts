@@ -25,6 +25,13 @@ export interface NetworkDiagnostics {
   ipAddresses: string[]
   dnsResolution: boolean
   apiReachable: boolean
+  apiBase?: string
+  apiHost?: string
+  apiIsLoopback?: boolean
+  apiIsPrivate?: boolean
+  apiEndpoint?: string
+  apiStatus?: number
+  apiError?: string
   wsReachable: boolean
   latency?: number
 }
@@ -124,6 +131,12 @@ export class PairingService {
       logger.info({ deviceId: response.device_id }, 'Pairing completed successfully')
       return response
     } catch (error) {
+      if (this.isNetworkError(error)) {
+        const apiBase = getConfigManager().getConfig().apiBase
+        logger.error({ apiBase, error }, 'Backend unreachable during pairing')
+        throw this.createBackendUnreachableError(error, apiBase)
+      }
+
       const status = (error as any)?.response?.status
       if (status === 404) {
         logger.warn({ pairingCode }, 'Pairing code not found or expired')
@@ -151,36 +164,54 @@ export class PairingService {
       }
     }
 
-    const httpClient = getHttpClient()
-    const status = await httpClient.get<PairingStatusResponse>(
-      `/api/v1/device-pairing/status?device_id=${encodeURIComponent(deviceId)}`,
-      { mtls: false }
-    )
+    try {
+      const httpClient = getHttpClient()
+      const status = await httpClient.get<PairingStatusResponse>(
+        `/api/v1/device-pairing/status?device_id=${encodeURIComponent(deviceId)}`,
+        { mtls: false }
+      )
 
-    this.updatePairingState(status.device_id, status.paired)
-    return status
+      this.updatePairingState(status.device_id, status.paired)
+      return status
+    } catch (error) {
+      if (this.isNetworkError(error)) {
+        const apiBase = getConfigManager().getConfig().apiBase
+        logger.error({ apiBase, error }, 'Backend unreachable while checking pairing status')
+        throw this.createBackendUnreachableError(error, apiBase)
+      }
+      throw error
+    }
   }
 
   /**
    * Request a new pairing code from backend
    */
   async requestPairingCode(overrides: Partial<PairingCodeRequest> = {}): Promise<PairingCodeResponse> {
-    const httpClient = getHttpClient()
-    const payload = this.buildPairingCodeRequest(overrides)
-    const response = await httpClient.post<PairingCodeResponse>('/api/v1/device-pairing/request', payload, {
-      mtls: false,
-    })
+    try {
+      const httpClient = getHttpClient()
+      const payload = this.buildPairingCodeRequest(overrides)
+      const response = await httpClient.post<PairingCodeResponse>('/api/v1/device-pairing/request', payload, {
+        mtls: false,
+      })
 
-    if (response.device_id) {
-      this.updatePairingState(response.device_id, false)
+      if (response.device_id) {
+        this.updatePairingState(response.device_id, false)
+      }
+
+      if (response.pairing_code) {
+        this.lastPairingCode = response.pairing_code
+      }
+      this.pairingExpiresAt = response.expires_at
+
+      return response
+    } catch (error) {
+      if (this.isNetworkError(error)) {
+        const apiBase = getConfigManager().getConfig().apiBase
+        logger.error({ apiBase, error }, 'Backend unreachable while requesting pairing code')
+        throw this.createBackendUnreachableError(error, apiBase)
+      }
+      throw error
     }
-
-    if (response.pairing_code) {
-      this.lastPairingCode = response.pairing_code
-    }
-    this.pairingExpiresAt = response.expires_at
-
-    return response
   }
 
   /**
@@ -311,6 +342,25 @@ export class PairingService {
     }
 
     return x || 1
+  }
+
+  private isNetworkError(error: any): boolean {
+    if (!error) return false
+    if (error.response) return false
+    const code = error.code
+    if (code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'ETIMEDOUT') {
+      return true
+    }
+    const message = String(error.message || '')
+    return /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET/i.test(message)
+  }
+
+  private createBackendUnreachableError(error: any, apiBase: string): Error {
+    const message = `Backend unreachable at ${apiBase}. Check backend host binding, firewall, and LAN IP.`
+    const err = new Error(message)
+    ;(err as any).cause = error
+    ;(err as any).code = error?.code
+    return err
   }
 
   /**
