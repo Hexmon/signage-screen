@@ -256,7 +256,10 @@ function getNetworkAddresses(): string[] {
 
 function isPrivateIpv4(hostname: string): boolean {
   if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) return false
-  const [a, b] = hostname.split('.').map((part) => parseInt(part, 10))
+  const parts = hostname.split('.')
+  if (parts.length !== 4) return false
+  const a = parseInt(parts[0] || '', 10)
+  const b = parseInt(parts[1] || '', 10)
   if (Number.isNaN(a) || Number.isNaN(b)) return false
   if (a === 10) return true
   if (a === 172 && b >= 16 && b <= 31) return true

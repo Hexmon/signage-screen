@@ -15,7 +15,6 @@ export class DefaultMediaPlayer {
   private debugOverlay: HTMLElement
   private statusOverlay: HTMLElement
   private current: DefaultMediaResponse = { media_id: null, media: null }
-  private currentElement?: HTMLElement
   private visible = false
   private retryTimer?: number
   private retryAttempt = 0
@@ -133,7 +132,6 @@ export class DefaultMediaPlayer {
     }
 
     this.content.appendChild(element)
-    this.currentElement = element
     this.updateDebugOverlay(media)
   }
 
@@ -298,7 +296,6 @@ export class DefaultMediaPlayer {
     while (this.content.firstChild) {
       this.content.removeChild(this.content.firstChild)
     }
-    this.currentElement = undefined
   }
 
   private handlePlaybackError(reason: string): void {

@@ -292,7 +292,7 @@ export class HttpClient {
     return {
       ok: false,
       baseURL,
-      endpoint: endpoints[endpoints.length - 1],
+      endpoint: endpoints[endpoints.length - 1] || '',
       error: lastError || 'Unknown network error',
     }
   }
