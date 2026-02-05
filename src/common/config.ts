@@ -1,134 +1,167 @@
 /**
- * Configuration management with JSON + environment variables
+ * Configuration management persisted to a user-writable JSON file.
  */
 
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
-import { AppConfig } from './types'
-
-const isDevelopment = process.env['NODE_ENV'] === 'development'
-const allowLocalhostFallback =
-  process.env['HEXMON_ALLOW_LOCALHOST_FALLBACK'] === 'true' ||
-  process.env['SIGNAGE_ALLOW_LOCALHOST'] === 'true' ||
-  isDevelopment
-const envApiBase = process.env['SIGNAGE_API_BASE_URL'] || process.env['API_BASE_URL']
-const envWsUrl = process.env['SIGNAGE_WS_URL'] || process.env['WS_URL']
-
-const DEFAULT_API_BASE = allowLocalhostFallback ? 'http://localhost:3000' : 'https://api.hexmon.local'
-const DEFAULT_WS_URL = allowLocalhostFallback ? 'ws://localhost:3000/ws' : 'wss://api.hexmon.local/ws'
-const homeDir = os.homedir() || '/tmp'
-
-const DEFAULT_CACHE_PATH =
-  process.env['HEXMON_CACHE_PATH'] || (isDevelopment ? path.join(homeDir, '.hexmon', 'cache') : '/var/cache/hexmon')
-
-const DEFAULT_CERT_DIR =
-  process.env['HEXMON_MTLS_CERT_DIR'] || (isDevelopment ? path.join(homeDir, '.hexmon', 'certs') : '/var/lib/hexmon/certs')
-
-const DEFAULT_CERT_PATH = process.env['HEXMON_MTLS_CERT_PATH'] || path.join(DEFAULT_CERT_DIR, 'client.crt')
-const DEFAULT_KEY_PATH = process.env['HEXMON_MTLS_KEY_PATH'] || path.join(DEFAULT_CERT_DIR, 'client.key')
-const DEFAULT_CA_PATH = process.env['HEXMON_MTLS_CA_PATH'] || path.join(DEFAULT_CERT_DIR, 'ca.crt')
-
-const DEFAULT_CONFIG: AppConfig = {
-  // Single source of truth for backend URLs is config.json (unless env overrides are set).
-  apiBase: DEFAULT_API_BASE,
-  wsUrl: DEFAULT_WS_URL,
-  deviceId: process.env['HEXMON_DEVICE_ID'] || '',
-  mtls: {
-    enabled: process.env['HEXMON_MTLS_ENABLED'] === 'true',
-    certPath: DEFAULT_CERT_PATH,
-    keyPath: DEFAULT_KEY_PATH,
-    caPath: DEFAULT_CA_PATH,
-    autoRenew: process.env['HEXMON_MTLS_AUTO_RENEW'] !== 'false',
-    renewBeforeDays: parseInt(process.env['HEXMON_MTLS_RENEW_BEFORE_DAYS'] || '30', 10),
-  },
-  cache: {
-    path: DEFAULT_CACHE_PATH,
-    maxBytes: parseInt(process.env['HEXMON_CACHE_MAX_BYTES'] || String(10 * 1024 * 1024 * 1024), 10), // 10GB default
-    prefetchConcurrency: parseInt(process.env['HEXMON_CACHE_PREFETCH_CONCURRENCY'] || '3', 10),
-    bandwidthBudgetMbps: parseInt(process.env['HEXMON_CACHE_BANDWIDTH_BUDGET_MBPS'] || '50', 10),
-  },
-  intervals: {
-    heartbeatMs: parseInt(process.env['HEXMON_INTERVAL_HEARTBEAT_MS'] || '30000', 10), // 30 seconds
-    commandPollMs: parseInt(process.env['HEXMON_INTERVAL_COMMAND_POLL_MS'] || '30000', 10), // 30 seconds
-    schedulePollMs: parseInt(process.env['HEXMON_INTERVAL_SCHEDULE_POLL_MS'] || '300000', 10), // 5 minutes
-    defaultMediaPollMs: parseInt(process.env['HEXMON_INTERVAL_DEFAULT_MEDIA_POLL_MS'] || '300000', 10), // 5 minutes
-    healthCheckMs: parseInt(process.env['HEXMON_INTERVAL_HEALTH_CHECK_MS'] || '60000', 10), // 1 minute
-    screenshotMs: parseInt(process.env['HEXMON_INTERVAL_SCREENSHOT_MS'] || '300000', 10), // 5 minutes
-  },
-  log: {
-    level: (process.env['HEXMON_LOG_LEVEL'] as AppConfig['log']['level']) || 'info',
-    shipPolicy: (process.env['HEXMON_LOG_SHIP_POLICY'] as AppConfig['log']['shipPolicy']) || 'batch',
-    rotationSizeMb: parseInt(process.env['HEXMON_LOG_ROTATION_SIZE_MB'] || '100', 10),
-    rotationIntervalHours: parseInt(process.env['HEXMON_LOG_ROTATION_INTERVAL_HOURS'] || '24', 10),
-    compressionEnabled: process.env['HEXMON_LOG_COMPRESSION_ENABLED'] !== 'false',
-  },
-  power: {
-    dpmsEnabled: process.env['HEXMON_POWER_DPMS_ENABLED'] !== 'false',
-    preventBlanking: process.env['HEXMON_POWER_PREVENT_BLANKING'] !== 'false',
-    scheduleEnabled: process.env['HEXMON_POWER_SCHEDULE_ENABLED'] === 'true',
-    onTime: process.env['HEXMON_POWER_ON_TIME'],
-    offTime: process.env['HEXMON_POWER_OFF_TIME'],
-  },
-  security: {
-    csp: process.env['HEXMON_SECURITY_CSP'] || "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'",
-    allowedDomains: process.env['HEXMON_SECURITY_ALLOWED_DOMAINS']?.split(',') || [],
-    disableEval: process.env['HEXMON_SECURITY_DISABLE_EVAL'] !== 'false',
-    contextIsolation: process.env['HEXMON_SECURITY_CONTEXT_ISOLATION'] !== 'false',
-    nodeIntegration: process.env['HEXMON_SECURITY_NODE_INTEGRATION'] === 'true',
-    sandbox: process.env['HEXMON_SECURITY_SANDBOX'] !== 'false',
-  },
-}
+import { EventEmitter } from 'events'
+import type { AppConfig } from './types'
+import type { App as ElectronApp } from 'electron'
 
 export class ConfigManager {
   private config: AppConfig
-  private configPath: string
+  private readonly configPath: string
+  private readonly defaults: AppConfig
+  private readonly emitter = new EventEmitter()
 
   constructor(configPath?: string) {
     this.configPath = configPath || this.getDefaultConfigPath()
+    this.defaults = this.buildDefaultConfig()
     this.config = this.loadConfig()
   }
 
   private getDefaultConfigPath(): string {
-    // Try multiple locations in order of preference
-    const locations = [
-      process.env['HEXMON_CONFIG_PATH'],
-      '/etc/hexmon/config.json',
-      path.join(process.env['HOME'] || '/root', '.config', 'hexmon', 'config.json'),
-      path.join(__dirname, '..', '..', 'config.json'),
-    ]
+    const override = process.env['SIGNAGE_CONFIG_PATH'] || process.env['HEXMON_CONFIG_PATH']
+    if (override) return override
 
-    for (const location of locations) {
-      if (location && fs.existsSync(location)) {
-        return location
-      }
+    const appInstance = this.getElectronApp()
+    if (appInstance) {
+      return path.join(appInstance.getPath('userData'), 'config.json')
     }
 
-    // Return the first writable location
-    return locations[2] || locations[3] || '/tmp/hexmon-config.json'
+    const homeDir = os.homedir() || os.tmpdir()
+    return path.join(homeDir, '.config', 'hexmon', 'config.json')
+  }
+
+  private getElectronApp(): ElectronApp | undefined {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const electron = require('electron') as typeof import('electron')
+      if (electron?.app && typeof electron.app.getPath === 'function') {
+        return electron.app
+      }
+    } catch {
+      return undefined
+    }
+    return undefined
+  }
+
+  private buildDefaultConfig(): AppConfig {
+    const isDevelopment = process.env['NODE_ENV'] === 'development'
+    const homeDir = os.homedir() || os.tmpdir()
+    const apiBase = this.buildDefaultApiBase()
+    const wsUrl = this.buildDefaultWsUrl(apiBase)
+
+    const defaultCachePath =
+      process.env['HEXMON_CACHE_PATH'] || (isDevelopment ? path.join(homeDir, '.hexmon', 'cache') : '/var/cache/hexmon')
+
+    const defaultCertDir =
+      process.env['HEXMON_MTLS_CERT_DIR'] || (isDevelopment ? path.join(homeDir, '.hexmon', 'certs') : '/var/lib/hexmon/certs')
+
+    const defaultCertPath = process.env['HEXMON_MTLS_CERT_PATH'] || path.join(defaultCertDir, 'client.crt')
+    const defaultKeyPath = process.env['HEXMON_MTLS_KEY_PATH'] || path.join(defaultCertDir, 'client.key')
+    const defaultCaPath = process.env['HEXMON_MTLS_CA_PATH'] || path.join(defaultCertDir, 'ca.crt')
+
+    return {
+      apiBase,
+      wsUrl,
+      deviceId: process.env['HEXMON_DEVICE_ID'] || '',
+      mtls: {
+        enabled: process.env['HEXMON_MTLS_ENABLED'] === 'true',
+        certPath: defaultCertPath,
+        keyPath: defaultKeyPath,
+        caPath: defaultCaPath,
+        autoRenew: process.env['HEXMON_MTLS_AUTO_RENEW'] !== 'false',
+        renewBeforeDays: parseInt(process.env['HEXMON_MTLS_RENEW_BEFORE_DAYS'] || '30', 10),
+      },
+      cache: {
+        path: defaultCachePath,
+        maxBytes: parseInt(process.env['HEXMON_CACHE_MAX_BYTES'] || String(10 * 1024 * 1024 * 1024), 10),
+        prefetchConcurrency: parseInt(process.env['HEXMON_CACHE_PREFETCH_CONCURRENCY'] || '3', 10),
+        bandwidthBudgetMbps: parseInt(process.env['HEXMON_CACHE_BANDWIDTH_BUDGET_MBPS'] || '50', 10),
+      },
+      intervals: {
+        heartbeatMs: parseInt(process.env['HEXMON_INTERVAL_HEARTBEAT_MS'] || '30000', 10),
+        commandPollMs: parseInt(process.env['HEXMON_INTERVAL_COMMAND_POLL_MS'] || '30000', 10),
+        schedulePollMs: parseInt(process.env['HEXMON_INTERVAL_SCHEDULE_POLL_MS'] || '300000', 10),
+        defaultMediaPollMs: parseInt(process.env['HEXMON_INTERVAL_DEFAULT_MEDIA_POLL_MS'] || '300000', 10),
+        healthCheckMs: parseInt(process.env['HEXMON_INTERVAL_HEALTH_CHECK_MS'] || '60000', 10),
+        screenshotMs: parseInt(process.env['HEXMON_INTERVAL_SCREENSHOT_MS'] || '300000', 10),
+      },
+      log: {
+        level: (process.env['HEXMON_LOG_LEVEL'] as AppConfig['log']['level']) || 'info',
+        shipPolicy: (process.env['HEXMON_LOG_SHIP_POLICY'] as AppConfig['log']['shipPolicy']) || 'batch',
+        rotationSizeMb: parseInt(process.env['HEXMON_LOG_ROTATION_SIZE_MB'] || '100', 10),
+        rotationIntervalHours: parseInt(process.env['HEXMON_LOG_ROTATION_INTERVAL_HOURS'] || '24', 10),
+        compressionEnabled: process.env['HEXMON_LOG_COMPRESSION_ENABLED'] !== 'false',
+      },
+      power: {
+        dpmsEnabled: process.env['HEXMON_POWER_DPMS_ENABLED'] !== 'false',
+        preventBlanking: process.env['HEXMON_POWER_PREVENT_BLANKING'] !== 'false',
+        scheduleEnabled: process.env['HEXMON_POWER_SCHEDULE_ENABLED'] === 'true',
+        onTime: process.env['HEXMON_POWER_ON_TIME'],
+        offTime: process.env['HEXMON_POWER_OFF_TIME'],
+      },
+      security: {
+        csp: process.env['HEXMON_SECURITY_CSP'] || "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'",
+        allowedDomains: process.env['HEXMON_SECURITY_ALLOWED_DOMAINS']?.split(',') || [],
+        disableEval: process.env['HEXMON_SECURITY_DISABLE_EVAL'] !== 'false',
+        contextIsolation: process.env['HEXMON_SECURITY_CONTEXT_ISOLATION'] !== 'false',
+        nodeIntegration: process.env['HEXMON_SECURITY_NODE_INTEGRATION'] === 'true',
+        sandbox: process.env['HEXMON_SECURITY_SANDBOX'] !== 'false',
+      },
+    }
+  }
+
+  private allowLocalhostFallback(): boolean {
+    return process.env['SIGNAGE_ALLOW_LOCALHOST'] === 'true' || process.env['NODE_ENV'] === 'development'
+  }
+
+  private buildDefaultApiBase(): string {
+    const envApiBase = process.env['SIGNAGE_API_BASE_URL'] || process.env['API_BASE_URL']
+    const normalizedEnv = this.normalizeUrl(envApiBase)
+    if (normalizedEnv) return normalizedEnv
+    return this.allowLocalhostFallback() ? 'http://localhost:3000' : 'http://192.168.0.4:3000'
+  }
+
+  private buildDefaultWsUrl(apiBase: string): string {
+    const derived = this.deriveWsUrl(apiBase)
+    if (derived) return derived
+    return this.allowLocalhostFallback() ? 'ws://localhost:3000/ws' : 'ws://192.168.0.4:3000/ws'
   }
 
   private loadConfig(): AppConfig {
-    try {
-      if (fs.existsSync(this.configPath)) {
-        const fileContent = fs.readFileSync(this.configPath, 'utf-8')
-        const fileConfig = JSON.parse(fileContent) as Partial<AppConfig>
-        
-        // Deep merge with defaults, environment variables take precedence
-        return this.applyEnvOverrides(this.mergeConfig(DEFAULT_CONFIG, fileConfig))
-      }
-    } catch (error) {
-      console.error('Failed to load config file, using defaults:', error)
+    const fileConfig = this.readConfigFromDisk()
+    const merged = this.normalizeConfig(this.mergeConfig(this.defaults, fileConfig || {}))
+
+    if (!fileConfig) {
+      this.config = merged
+      this.saveConfig()
+      return merged
     }
 
-    return this.applyEnvOverrides(DEFAULT_CONFIG)
+    this.config = merged
+    return merged
+  }
+
+  private readConfigFromDisk(): Partial<AppConfig> | null {
+    try {
+      if (fs.existsSync(this.configPath)) {
+        const content = fs.readFileSync(this.configPath, 'utf-8')
+        return JSON.parse(content) as Partial<AppConfig>
+      }
+    } catch (error) {
+      console.error('Failed to load config file, falling back to defaults:', error)
+    }
+    return null
   }
 
   private mergeConfig(defaults: AppConfig, overrides: Partial<AppConfig>): AppConfig {
     return {
-      apiBase: overrides.apiBase || defaults.apiBase,
-      wsUrl: overrides.wsUrl || defaults.wsUrl,
-      deviceId: overrides.deviceId || defaults.deviceId,
+      apiBase: overrides.apiBase ?? defaults.apiBase,
+      wsUrl: overrides.wsUrl ?? defaults.wsUrl,
+      deviceId: overrides.deviceId ?? defaults.deviceId,
       mtls: { ...defaults.mtls, ...overrides.mtls },
       cache: { ...defaults.cache, ...overrides.cache },
       intervals: { ...defaults.intervals, ...overrides.intervals },
@@ -138,16 +171,14 @@ export class ConfigManager {
     }
   }
 
-  private applyEnvOverrides(config: AppConfig): AppConfig {
-    const resolvedApiBase = this.normalizeUrl(envApiBase || config.apiBase)
-    const resolvedWsUrl = this.normalizeUrl(
-      envWsUrl || (envApiBase ? this.deriveWsUrl(resolvedApiBase) : config.wsUrl)
-    )
+  private normalizeConfig(config: AppConfig): AppConfig {
+    const apiBase = this.normalizeUrl(config.apiBase) || this.buildDefaultApiBase()
+    const wsUrl = this.normalizeUrl(config.wsUrl) || this.buildDefaultWsUrl(apiBase)
 
     return {
       ...config,
-      apiBase: resolvedApiBase,
-      wsUrl: resolvedWsUrl || config.wsUrl,
+      apiBase,
+      wsUrl,
     }
   }
 
@@ -169,13 +200,32 @@ export class ConfigManager {
     return value.replace(/\/+$/, '')
   }
 
-  public getConfig(): AppConfig {
-    return { ...this.config }
+  private cloneConfig(config: AppConfig): AppConfig {
+    return {
+      ...config,
+      mtls: { ...config.mtls },
+      cache: { ...config.cache },
+      intervals: { ...config.intervals },
+      log: { ...config.log },
+      power: { ...config.power },
+      security: { ...config.security, allowedDomains: [...config.security.allowedDomains] },
+    }
   }
 
-  public updateConfig(updates: Partial<AppConfig>): void {
-    this.config = this.mergeConfig(this.config, updates)
+  public getConfig(): AppConfig {
+    return this.cloneConfig(this.config)
+  }
+
+  public updateConfig(updates: Partial<AppConfig>): AppConfig {
+    const normalizedUpdates = { ...updates }
+    if (updates?.apiBase && updates.wsUrl === undefined) {
+      normalizedUpdates.wsUrl = this.buildDefaultWsUrl(this.normalizeUrl(updates.apiBase))
+    }
+
+    this.config = this.normalizeConfig(this.mergeConfig(this.config, normalizedUpdates))
     this.saveConfig()
+    this.emitter.emit('change', this.getConfig())
+    return this.getConfig()
   }
 
   public saveConfig(): void {
@@ -185,9 +235,7 @@ export class ConfigManager {
         fs.mkdirSync(dir, { recursive: true, mode: 0o755 })
       }
 
-      fs.writeFileSync(this.configPath, JSON.stringify(this.config, null, 2), {
-        mode: 0o600, // Secure permissions
-      })
+      fs.writeFileSync(this.configPath, JSON.stringify(this.config, null, 2), { mode: 0o600 })
     } catch (error) {
       console.error('Failed to save config:', error)
       throw error
@@ -199,8 +247,12 @@ export class ConfigManager {
   }
 
   public set<K extends keyof AppConfig>(key: K, value: AppConfig[K]): void {
-    this.config[key] = value
-    this.saveConfig()
+    this.updateConfig({ [key]: value } as Partial<AppConfig>)
+  }
+
+  public onChange(listener: (config: AppConfig) => void): () => void {
+    this.emitter.on('change', listener)
+    return () => this.emitter.off('change', listener)
   }
 
   public getConfigPath(): string {
@@ -210,7 +262,6 @@ export class ConfigManager {
   public validateConfig(): { valid: boolean; errors: string[] } {
     const errors: string[] = []
 
-    // Validate required fields
     if (!this.config.apiBase) {
       errors.push('apiBase is required')
     }
@@ -219,7 +270,6 @@ export class ConfigManager {
       errors.push('wsUrl is required')
     }
 
-    // Validate URLs
     try {
       new URL(this.config.apiBase)
     } catch {
@@ -232,7 +282,6 @@ export class ConfigManager {
       errors.push('wsUrl must be a valid URL')
     }
 
-    // Validate cache settings
     if (this.config.cache.maxBytes < 1024 * 1024 * 100) {
       errors.push('cache.maxBytes must be at least 100MB')
     }
@@ -241,7 +290,6 @@ export class ConfigManager {
       errors.push('cache.prefetchConcurrency must be between 1 and 10')
     }
 
-    // Validate intervals
     if (this.config.intervals.heartbeatMs < 10000) {
       errors.push('intervals.heartbeatMs must be at least 10 seconds')
     }
@@ -258,7 +306,6 @@ export class ConfigManager {
       errors.push('intervals.screenshotMs must be at least 10 seconds')
     }
 
-    // Validate mTLS paths if enabled
     if (this.config.mtls.enabled) {
       const paths = [this.config.mtls.certPath, this.config.mtls.keyPath, this.config.mtls.caPath]
       for (const p of paths) {
@@ -268,7 +315,6 @@ export class ConfigManager {
       }
     }
 
-    // Validate power schedule times
     if (this.config.power.scheduleEnabled) {
       const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/
       if (this.config.power.onTime && !timeRegex.test(this.config.power.onTime)) {
@@ -286,7 +332,6 @@ export class ConfigManager {
   }
 }
 
-// Singleton instance
 let configManager: ConfigManager | null = null
 
 export function getConfigManager(configPath?: string): ConfigManager {

@@ -5,6 +5,7 @@
 
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
+  AppConfig,
   HealthStatus,
   DiagnosticsInfo,
   DefaultMediaResponse,
@@ -45,8 +46,10 @@ export interface HexmonAPI {
   executeCommand: (command: string, payload?: unknown) => Promise<unknown>
 
   // Configuration
-  getConfig: () => Promise<unknown>
-  updateConfig: (updates: unknown) => Promise<void>
+  getConfig: () => Promise<AppConfig>
+  setConfig: (updates: Partial<AppConfig>) => Promise<AppConfig>
+  onConfigChanged: (callback: (config: AppConfig) => void) => () => void
+  updateConfig?: (updates: Partial<AppConfig>) => Promise<AppConfig>
 
   // Logs
   log: (level: string, message: string, data?: unknown) => void
@@ -129,12 +132,23 @@ contextBridge.exposeInMainWorld('hexmon', {
   },
 
   // Configuration
-  getConfig: async (): Promise<unknown> => {
-    return await ipcRenderer.invoke('get-config')
+  getConfig: async (): Promise<AppConfig> => {
+    return await ipcRenderer.invoke('config:get')
   },
 
-  updateConfig: async (updates: unknown): Promise<void> => {
-    return await ipcRenderer.invoke('update-config', updates)
+  setConfig: async (updates: Partial<AppConfig>): Promise<AppConfig> => {
+    return await ipcRenderer.invoke('config:set', updates)
+  },
+
+  onConfigChanged: (callback: (config: AppConfig) => void) => {
+    const listener = (_event: any, data: AppConfig) => callback(data)
+    ipcRenderer.on('config:changed', listener)
+    return () => ipcRenderer.removeListener('config:changed', listener)
+  },
+
+  // Backwards compatibility
+  updateConfig: async (updates: Partial<AppConfig>): Promise<AppConfig> => {
+    return await ipcRenderer.invoke('config:set', updates)
   },
 
   // Logging

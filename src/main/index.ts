@@ -14,11 +14,17 @@ import * as path from 'path'
 import { getConfigManager } from '../common/config'
 import { getLogger } from '../common/logger'
 import { ExponentialBackoff } from '../common/utils'
+import type { AppConfig } from '../common/types'
 
 console.log('Initializing logger...')
 const logger = getLogger('main')
 console.log('Logger initialized')
 const config = getConfigManager()
+
+config.onChange((nextConfig) => {
+  applyConfigToNetworkClients(nextConfig)
+  broadcastConfigUpdate(nextConfig)
+})
 
 // Single instance lock
 const gotTheLock = app.requestSingleInstanceLock()
@@ -39,6 +45,41 @@ if (!gotTheLock) {
 
 let mainWindow: BrowserWindow | null = null
 const restartBackoff = new ExponentialBackoff(1000, 60000, 10)
+
+function broadcastConfigUpdate(nextConfig?: AppConfig): void {
+  const payload = nextConfig || config.getConfig()
+  BrowserWindow.getAllWindows().forEach((win) => {
+    if (!win.isDestroyed()) {
+      win.webContents.send('config:changed', payload)
+    }
+  })
+}
+
+function applyConfigToNetworkClients(nextConfig: AppConfig): void {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { getHttpClient } = require('./services/network/http-client')
+    const httpClient = getHttpClient()
+    if (typeof httpClient.applyConfig === 'function') {
+      httpClient.applyConfig(nextConfig)
+    } else if (typeof httpClient.setBaseURL === 'function') {
+      httpClient.setBaseURL(nextConfig.apiBase)
+    }
+  } catch (error) {
+    logger.warn({ error }, 'Failed to apply config to HTTP client')
+  }
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { getWebSocketClient } = require('./services/network/websocket-client')
+    const wsClient = getWebSocketClient()
+    if (typeof wsClient.applyConfig === 'function') {
+      wsClient.applyConfig(nextConfig)
+    }
+  } catch (error) {
+    logger.warn({ error }, 'Failed to apply config to WebSocket client')
+  }
+}
 
 // Disable hardware acceleration if needed for stability
 // app.disableHardwareAcceleration()
@@ -272,6 +313,20 @@ function isPrivateIpv4(hostname: string): boolean {
  */
 function setupIPCHandlers(): void {
   const { ipcMain } = require('electron')
+
+  ipcMain.handle('config:get', async () => config.getConfig())
+
+  ipcMain.handle('config:set', async (_event: any, updates: Partial<AppConfig>) => {
+    config.updateConfig(updates || {})
+    return config.getConfig()
+  })
+
+  ipcMain.handle('get-config', async () => config.getConfig())
+
+  ipcMain.handle('update-config', async (_event: any, updates: Partial<AppConfig>) => {
+    config.updateConfig(updates || {})
+    return config.getConfig()
+  })
 
   // Pairing
   ipcMain.handle('pairing-request', async (_event: any, payload?: any) => {

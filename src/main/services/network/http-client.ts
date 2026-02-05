@@ -9,6 +9,7 @@ import { getLogger } from '../../../common/logger'
 import { getConfigManager } from '../../../common/config'
 import { getCertificateManager } from '../cert-manager'
 import { NetworkError } from '../../../common/types'
+import type { AppConfig } from '../../../common/types'
 import { retryWithBackoff } from '../../../common/utils'
 import { X509Certificate } from 'crypto'
 
@@ -364,6 +365,11 @@ export class HttpClient {
   setBaseURL(baseURL: string): void {
     this.client.defaults.baseURL = baseURL
     logger.info({ baseURL }, 'Base URL updated')
+  }
+
+  applyConfig(config: AppConfig): void {
+    this.mtlsEnabled = config.mtls.enabled
+    this.setBaseURL(config.apiBase)
   }
 
   /**

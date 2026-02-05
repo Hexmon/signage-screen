@@ -9,7 +9,7 @@ import { EventEmitter } from 'events'
 import { getLogger } from '../../../common/logger'
 import { getConfigManager } from '../../../common/config'
 import { getCertificateManager } from '../cert-manager'
-import { WSMessage } from '../../../common/types'
+import { AppConfig, WSMessage } from '../../../common/types'
 import { ExponentialBackoff } from '../../../common/utils'
 
 const logger = getLogger('websocket-client')
@@ -304,6 +304,20 @@ export class WebSocketClient extends EventEmitter {
     this.connect().catch((error) => {
       logger.error({ error }, 'Failed to reconnect with mTLS')
     })
+  }
+
+  applyConfig(config: AppConfig): void {
+    const urlChanged = config.wsUrl !== this.wsUrl
+    const mtlsChanged = config.mtls.enabled !== this.mtlsEnabled
+    this.wsUrl = config.wsUrl
+    this.mtlsEnabled = config.mtls.enabled
+
+    if (urlChanged || mtlsChanged) {
+      this.disconnect()
+      this.connect().catch((error) => {
+        logger.error({ error }, 'Failed to reconnect after config update')
+      })
+    }
   }
 }
 
