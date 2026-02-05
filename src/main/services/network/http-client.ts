@@ -64,12 +64,11 @@ export class HttpClient {
           try {
             const certManager = getCertificateManager()
 
-            // 1) Prefer metadata.serial if you store it (recommended)
+            // 1) Prefer persisted metadata to avoid parsing certificate on each request.
             const metadata = certManager.getCertificateMetadata() as any
-            let serial: string | undefined = metadata?.serial
+            let serial: string | undefined = metadata?.serialNumber || metadata?.serial || metadata?.fingerprint
 
-            // 2) If you only stored "fingerprint" earlier, DO NOT use it for auth.
-            //    Instead parse serial from the actual client certificate.
+            // 2) Fallback to parsing from the client certificate if metadata is unavailable.
             if (!serial) {
               const certs = await certManager.loadCertificates()
               const x509 = new X509Certificate(certs.cert) // cert PEM
