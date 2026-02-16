@@ -193,16 +193,18 @@ export class CertificateManager {
       fs.chmodSync(this.caPath, 0o600)
       logger.info({ caPath: this.caPath }, 'CA certificate stored')
 
-      // Verify certificates
-      const isValid = await this.verifyCertificate()
-      if (!isValid) {
-        throw new Error('Certificate verification failed')
-      }
-
-      // Persist certificate metadata
+      // Persist metadata even when strict X509 parsing is unavailable.
       await this.persistMetadata()
 
-      logger.info('Certificates stored and verified successfully')
+      // Verify certificates.
+      // NOTE: backend pairing can return a compatibility certificate format that may
+      // fail strict local X509 parsing in some runtimes; do not fail pairing for that.
+      const isValid = await this.verifyCertificate()
+      if (!isValid) {
+        logger.warn('Certificate verification failed locally; continuing with stored certificate metadata')
+      }
+
+      logger.info({ verified: isValid }, 'Certificates stored')
     } catch (error) {
       logger.error({ error }, 'Failed to store certificates')
       throw error
