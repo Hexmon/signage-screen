@@ -7,8 +7,10 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { getLogger } from '../../../common/logger'
 import { getConfigManager } from '../../../common/config'
+import { DeviceApiError } from '../../../common/types'
 import { atomicWrite, ensureDir } from '../../../common/utils'
 import { getHttpClient } from './http-client'
+import { getLifecycleEvents } from '../lifecycle-events'
 
 const logger = getLogger('request-queue')
 
@@ -119,6 +121,15 @@ export class RequestQueue {
       } catch (error) {
         logger.warn({ id: request.id, error }, 'Request execution failed')
 
+        if (error instanceof DeviceApiError && (error.code === 'UNAUTHORIZED' || error.code === 'FORBIDDEN' || error.code === 'NOT_FOUND')) {
+          getLifecycleEvents().emitRuntimeAuthFailure({
+            source: 'request-queue',
+            error,
+          })
+          logger.warn({ id: request.id, code: error.code }, 'Dropping queued request after auth failure')
+          continue
+        }
+
         request.retries++
         if (request.retries < request.maxRetries) {
           failedRequests.push(request)
@@ -219,4 +230,3 @@ export function getRequestQueue(): RequestQueue {
   }
   return requestQueue
 }
-

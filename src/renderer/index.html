@@ -430,6 +430,65 @@
       background: rgba(255, 214, 102, 0.2);
       color: #ffd666;
     }
+
+    #connectivity-banner {
+      position: absolute;
+      bottom: 24px;
+      left: 24px;
+      padding: 10px 16px;
+      border-radius: 12px;
+      background: rgba(255, 107, 107, 0.18);
+      color: #ffd8d8;
+      font-size: 13px;
+      z-index: 12;
+      max-width: 420px;
+    }
+
+    #connectivity-banner.hidden {
+      display: none;
+    }
+
+    #recovery-overlay {
+      position: absolute;
+      right: 24px;
+      bottom: 24px;
+      width: min(420px, calc(100vw - 48px));
+      padding: 20px;
+      border-radius: 16px;
+      background: rgba(15, 15, 15, 0.88);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      backdrop-filter: blur(8px);
+      z-index: 15;
+    }
+
+    #recovery-overlay.hidden {
+      display: none;
+    }
+
+    .recovery-title {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+
+    .recovery-reason {
+      font-size: 14px;
+      line-height: 1.5;
+      opacity: 0.9;
+      margin-bottom: 16px;
+    }
+
+    .recovery-actions {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .recovery-meta {
+      margin-top: 12px;
+      font-size: 12px;
+      opacity: 0.75;
+    }
   </style>
 </head>
 <body>
@@ -465,6 +524,7 @@
   </div>
 
   <div id="mode-banner" class="hidden"></div>
+  <div id="connectivity-banner" class="hidden"></div>
 
   <!-- Pairing Screen -->
   <div id="pairing-screen" class="hidden">
@@ -499,7 +559,7 @@
     </div>
 
     <div class="pairing-actions">
-      <button class="pairing-button" id="pairing-complete" disabled>Complete Pairing</button>
+      <button class="pairing-button" id="pairing-complete" disabled>Retry Provisioning</button>
     </div>
 
     <div class="pairing-meta">Device ID: <span id="pairing-device-id">-</span></div>
@@ -514,6 +574,16 @@
         </li>
       </ul>
     </div>
+  </div>
+
+  <div id="recovery-overlay" class="hidden">
+    <div class="recovery-title" id="recovery-title">Recovery Required</div>
+    <div class="recovery-reason" id="recovery-reason">Device runtime needs attention.</div>
+    <div class="recovery-actions">
+      <button class="pairing-button secondary" id="recovery-retry">Retry</button>
+      <button class="pairing-button" id="recovery-repair">Re-pair Device</button>
+    </div>
+    <div class="recovery-meta" id="recovery-meta"></div>
   </div>
 
   <!-- Diagnostics Overlay (Ctrl+Shift+D) -->

@@ -341,13 +341,15 @@ function setupIPCHandlers(): void {
 
   ipcMain.handle('pairing-complete', async (_event: any, code?: string) => {
     const { getPlayerFlow } = await import('./services/player-flow')
-    return await getPlayerFlow().completePairing(code)
+    void code
+    return await getPlayerFlow().completePairing()
   })
 
   // Backwards compatibility
   ipcMain.handle('submit-pairing', async (_event: any, code: string) => {
     const { getPlayerFlow } = await import('./services/player-flow')
-    return await getPlayerFlow().completePairing(code)
+    void code
+    return await getPlayerFlow().completePairing()
   })
 
   ipcMain.handle('get-pairing-status', async () => {
@@ -358,6 +360,15 @@ function setupIPCHandlers(): void {
   ipcMain.handle('request-pairing-code', async (_event: any, payload?: any) => {
     const { getPlayerFlow } = await import('./services/player-flow')
     return await getPlayerFlow().requestPairingCode(payload)
+  })
+
+  ipcMain.handle('player-action', async (_event: any, action: string, payload?: any) => {
+    const { getPlayerFlow } = await import('./services/player-flow')
+    if (action === 'retry-recovery' || action === 're-pair' || action === 'reset-doubtful-pairing' || action === 'refresh-pairing') {
+      await getPlayerFlow().performAction(action, payload)
+      return getPlayerFlow().getStatus()
+    }
+    throw new Error(`Unsupported player action: ${action}`)
   })
 
   ipcMain.handle('get-player-status', async () => {

@@ -459,6 +459,42 @@ delete require.cache[require.resolve('module')]
 
 Tests may fail if ports are in use. Ensure no other instances are running.
 
+## Manual QA Checklist
+
+Use this checklist to validate the Electron pairing and authenticated runtime flow against `DEVICE_PAIRING_API_FLOW_WITH_CURLS.md`.
+
+### Pairing And Provisioning
+
+1. Start the player with no local identity and verify it enters `HARD_RECOVERY`, requests a fresh pairing code, and transitions to `PAIRING_PENDING` once the request succeeds.
+2. Verify the pairing screen shows the current `pairing_code`, `device_id`, and expiry countdown.
+3. Approve the device in backend/admin and verify status reaches `confirmed === true` with `screen === null`, then the player moves through `PAIRING_CONFIRMED` to `PAIRING_COMPLETING`.
+4. Verify main generates or reuses the private key, generates the CSR, installs certificate and CA, persists fingerprint, clears `pairing_code` and `pairing_expires_at`, and transitions to `PAIRED_RUNTIME`.
+5. Restart the app after successful completion and verify it restores directly into `PAIRED_RUNTIME`.
+
+### Pairing Failure Cases
+
+1. Force temporary network failure during pairing status polling and verify the pairing code remains visible while polling retries with backoff.
+2. Force pairing completion to return `Pairing not confirmed` and verify the player returns to polling instead of failing pairing.
+3. Force pairing completion to return `Invalid or expired pairing code` and verify stale pairing metadata is cleared and a fresh pairing request is started.
+4. Simulate a pairing request failure during hard recovery and verify the player stays in `HARD_RECOVERY` without showing a stale pairing code.
+5. Retry fresh pairing from hard recovery and verify a new pairing request is created only after the retry action succeeds.
+
+### Runtime And Recovery
+
+1. With valid credentials, verify heartbeat, command fetch, command ack, proof-of-play, and screenshot requests all use the same `x-device-serial` mapping path.
+2. Deliver the same command once via heartbeat inline commands and once via `GET /commands` and verify it executes only once and is acknowledged once.
+3. Restart the app after a command has been seen but before ack replay completes and verify the recent-command ledger prevents duplicate execution.
+4. Force `403 Invalid device credentials` while playable content is cached and verify playback continues, runtime loops stop, and the UI enters `RECOVERY_REQUIRED` without auto re-pairing.
+5. Force `404 Device not registered` and verify the UI enters `HARD_RECOVERY`, preserves playback if local content exists, and starts fresh pairing after the countdown.
+
+### Offline And Queueing
+
+1. Disconnect the network during runtime and verify current playback continues when cached content exists.
+2. While offline, generate proof-of-play events and verify they are spooled locally and replayed in order when connectivity returns.
+3. Force screenshot upload failures and verify they remain best-effort, do not block playback, and do not block proof-of-play replay.
+4. Restart the app while proof-of-play events are queued and verify the backlog is restored and replayed after connectivity returns.
+5. Restart the app with partial identity states such as `device_id` without key, key without certificate, or certificate without fingerprint and verify startup enters `RECOVERY_REQUIRED` with an actionable reason instead of showing fresh pairing UI immediately.
+
 ## Resources
 
 - [Mocha Documentation](https://mochajs.org/)
@@ -468,5 +504,4 @@ Tests may fail if ports are in use. Ensure no other instances are running.
 
 ---
 
-**Last Updated**: 2025-01-05
-
+**Last Updated**: 2026-03-11

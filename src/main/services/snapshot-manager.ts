@@ -8,12 +8,13 @@ import * as path from 'path'
 import { pathToFileURL } from 'url'
 import { getLogger } from '../../common/logger'
 import { getConfigManager } from '../../common/config'
-import { CacheError, PlaybackMode, TimelineItem } from '../../common/types'
+import { CacheError, DeviceApiError, PlaybackMode, TimelineItem } from '../../common/types'
 import { atomicWrite, ensureDir } from '../../common/utils'
 import { getHttpClient } from './network/http-client'
 import { getPairingService } from './pairing-service'
 import { getCacheManager } from './cache/cache-manager'
 import { NormalizedSnapshot, parseSnapshotResponse } from './snapshot-parser'
+import { getLifecycleEvents } from './lifecycle-events'
 
 const logger = getLogger('snapshot-manager')
 
@@ -113,6 +114,13 @@ export class SnapshotManager extends EventEmitter {
       this.emit('playlist-updated', playlist)
       return playlist
     } catch (error: any) {
+      if (error instanceof DeviceApiError && (error.code === 'UNAUTHORIZED' || error.code === 'FORBIDDEN' || error.code === 'NOT_FOUND')) {
+        getLifecycleEvents().emitRuntimeAuthFailure({
+          source: 'snapshot',
+          error,
+        })
+      }
+
       const status = error?.response?.status
 
       if (status === 404) {

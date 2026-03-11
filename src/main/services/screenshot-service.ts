@@ -8,10 +8,12 @@ import * as path from 'path'
 import { BrowserWindow } from 'electron'
 import { getLogger } from '../../common/logger'
 import { getConfigManager } from '../../common/config'
+import { DeviceApiError } from '../../common/types'
 import { getHttpClient } from './network/http-client'
 import { getPairingService } from './pairing-service'
 import { getCertificateManager } from './cert-manager'
 import { getRequestQueue } from './network/request-queue'
+import { getLifecycleEvents } from './lifecycle-events'
 import { atomicWrite, ensureDir, generateId } from '../../common/utils'
 
 const logger = getLogger('screenshot-service')
@@ -113,7 +115,14 @@ export class ScreenshotService {
 
       const response = await httpClient.post<{ success?: boolean; object_key?: string; timestamp?: string }>(
         '/api/v1/device/screenshot',
-        payload
+        payload,
+        {
+          retryPolicy: {
+            maxAttempts: 2,
+            baseDelayMs: 2000,
+            maxDelayMs: 15000,
+          },
+        }
       )
 
       if (response?.success === false) {
@@ -127,6 +136,14 @@ export class ScreenshotService {
 
       return response?.object_key || ''
     } catch (error) {
+      if (error instanceof DeviceApiError && (error.code === 'UNAUTHORIZED' || error.code === 'FORBIDDEN' || error.code === 'NOT_FOUND')) {
+        getLifecycleEvents().emitRuntimeAuthFailure({
+          source: 'screenshot',
+          error,
+        })
+        throw error
+      }
+
       logger.error({ error, filepath }, 'Failed to upload screenshot, queuing for retry')
 
       // Queue payload for retry to avoid losing screenshots when offline

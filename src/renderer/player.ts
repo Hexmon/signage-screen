@@ -163,12 +163,16 @@ class Player {
   }
 
   private updateContentSource(status: PlayerStatus): void {
-    if (status.state === 'NEED_PAIRING' || status.state === 'PAIRING_REQUESTED' || status.state === 'WAITING_CONFIRMATION') {
+    if (
+      status.state === 'PAIRING_PENDING' ||
+      status.state === 'PAIRING_CONFIRMED' ||
+      status.state === 'PAIRING_COMPLETING'
+    ) {
       this.setActiveSource('none')
       return
     }
 
-    const shouldShowDefault = status.state === 'OFFLINE_FALLBACK' || status.mode === 'offline' || status.mode === 'empty'
+    const shouldShowDefault = status.mode === 'offline' || status.mode === 'empty'
     this.setActiveSource(shouldShowDefault ? 'default' : 'schedule')
   }
 

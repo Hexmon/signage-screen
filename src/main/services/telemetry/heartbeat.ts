@@ -4,11 +4,14 @@
 
 import { getLogger } from '../../../common/logger'
 import { getConfigManager } from '../../../common/config'
-import { HeartbeatPayload } from '../../../common/types'
+import { Command, DeviceApiError, HeartbeatPayload } from '../../../common/types'
 import { getHttpClient } from '../network/http-client'
 import { getRequestQueue } from '../network/request-queue'
 import { getPairingService } from '../pairing-service'
 import { getSystemStatsCollector } from './system-stats'
+import { getDeviceStateStore } from '../device-state-store'
+import { getLifecycleEvents } from '../lifecycle-events'
+import { getCommandProcessor } from '../command-processor'
 
 const logger = getLogger('heartbeat')
 
@@ -63,6 +66,10 @@ export class HeartbeatService {
     this.isRunning = false
   }
 
+  async sendImmediate(): Promise<void> {
+    await this.sendHeartbeat()
+  }
+
   /**
    * Send heartbeat to backend
    */
@@ -111,10 +118,36 @@ export class HeartbeatService {
 
       // Send heartbeat
       const httpClient = getHttpClient()
-      await httpClient.post('/api/v1/device/heartbeat', payload)
+      const response = await httpClient.post<{ success: boolean; timestamp?: string; commands?: Command[] }>(
+        '/api/v1/device/heartbeat',
+        payload,
+        {
+          retryPolicy: {
+            maxAttempts: 3,
+            baseDelayMs: 2000,
+            maxDelayMs: 30000,
+          },
+        }
+      )
+
+      await getDeviceStateStore().update({
+        lastHeartbeatAt: response.timestamp || new Date().toISOString(),
+      })
+
+      if (Array.isArray(response.commands) && response.commands.length > 0) {
+        await getCommandProcessor().ingestCommands(response.commands, 'heartbeat')
+      }
 
       logger.debug({ deviceId }, 'Heartbeat sent successfully')
     } catch (error) {
+      if (error instanceof DeviceApiError && (error.code === 'UNAUTHORIZED' || error.code === 'FORBIDDEN' || error.code === 'NOT_FOUND')) {
+        getLifecycleEvents().emitRuntimeAuthFailure({
+          source: 'heartbeat',
+          error,
+        })
+        return
+      }
+
       logger.error({ error }, 'Failed to send heartbeat')
 
       // Queue for later if offline

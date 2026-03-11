@@ -28,6 +28,10 @@ export interface HexmonAPI {
   getPairingStatus: () => Promise<PairingStatusResponse>
   requestPairingCode: (payload?: Partial<PairingCodeRequest>) => Promise<PairingCodeResponse>
   completePairing: (code?: string) => Promise<PairingResponse>
+  playerAction: (
+    action: 'retry-recovery' | 're-pair' | 'reset-doubtful-pairing' | 'refresh-pairing',
+    payload?: Partial<PairingCodeRequest>
+  ) => Promise<unknown>
   getDeviceInfo: () => Promise<unknown>
 
   // Diagnostics
@@ -89,6 +93,13 @@ contextBridge.exposeInMainWorld('hexmon', {
 
   completePairing: async (code?: string): Promise<PairingResponse> => {
     return await ipcRenderer.invoke('pairing-complete', code)
+  },
+
+  playerAction: async (
+    action: 'retry-recovery' | 're-pair' | 'reset-doubtful-pairing' | 'refresh-pairing',
+    payload?: Partial<PairingCodeRequest>
+  ): Promise<unknown> => {
+    return await ipcRenderer.invoke('player-action', action, payload)
   },
 
   getDeviceInfo: async (): Promise<unknown> => {

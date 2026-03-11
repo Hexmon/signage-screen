@@ -91,16 +91,17 @@ export interface DefaultMediaResponse {
   media: DefaultMediaItem | null
 }
 
-// Player state machine
+// Player lifecycle state machine
 export type PlayerState =
   | 'BOOT'
-  | 'NEED_PAIRING'
-  | 'PAIRING_REQUESTED'
-  | 'WAITING_CONFIRMATION'
-  | 'CERT_ISSUED'
-  | 'PLAYBACK_RUNNING'
-  | 'OFFLINE_FALLBACK'
-  | 'ERROR'
+  | 'BOOTSTRAP_AUTH'
+  | 'SOFT_RECOVERY'
+  | 'RECOVERY_REQUIRED'
+  | 'HARD_RECOVERY'
+  | 'PAIRING_PENDING'
+  | 'PAIRING_CONFIRMED'
+  | 'PAIRING_COMPLETING'
+  | 'PAIRED_RUNTIME'
 
 export type PlaybackMode = 'normal' | 'emergency' | 'default' | 'offline' | 'empty'
 
@@ -109,9 +110,16 @@ export interface PlayerStatus {
   mode: PlaybackMode
   online: boolean
   deviceId?: string
+  pairingCode?: string
+  pairingExpiresAt?: string
+  recoveryReason?: string
+  hardRecoveryDeadlineAt?: string
+  backendAvailable?: boolean
+  awaitingManualRecovery?: boolean
   scheduleId?: string
   currentMediaId?: string
   lastSnapshotAt?: string
+  lastHeartbeatAt?: string
   error?: string
 }
 
@@ -336,6 +344,8 @@ export type CommandType =
   | 'REFRESH'
   | 'REFRESH_SCHEDULE'
   | 'SCREENSHOT'
+  | 'TAKE_SCREENSHOT'
+  | 'SET_SCREENSHOT_INTERVAL'
   | 'TEST_PATTERN'
   | 'CLEAR_CACHE'
   | 'PING'
@@ -406,13 +416,26 @@ export interface PairingRequest {
   device_info?: DeviceInfo
 }
 
+export type ActivePairingMode = 'PAIRING' | 'RECOVERY'
+
+export interface ActivePairingStatus {
+  id?: string
+  pairing_code?: string
+  expires_at?: string
+  expires_in?: number
+  confirmed: boolean
+  mode: ActivePairingMode
+}
+
 export interface PairingStatusResponse {
   device_id: string
-  paired: boolean
+  paired?: boolean
+  confirmed?: boolean
   screen: {
     id: string
     status: string
   } | null
+  active_pairing?: ActivePairingStatus | null
 }
 
 export type PairingOrientation = 'landscape' | 'portrait'
@@ -447,8 +470,56 @@ export interface PairingResponse {
   success?: boolean
   certificate?: string
   ca_certificate?: string
+  fingerprint?: string
+  expires_at?: string
   api_base?: string
   ws_url?: string
+}
+
+export type RecoveryKind = 'AUTH_INVALID' | 'DEVICE_NOT_REGISTERED' | 'PARTIAL_IDENTITY' | 'PAIRING_FAILED' | 'UNKNOWN'
+
+export interface RecentCommandRecord {
+  id: string
+  firstSeenAt: string
+  lastSeenAt: string
+  source: 'heartbeat' | 'poll'
+  acknowledgedAt?: string
+}
+
+export interface DeviceStateRecord {
+  lifecycleState?: PlayerState
+  deviceId?: string
+  pairingCode?: string
+  pairingExpiresAt?: string
+  activePairingMode?: ActivePairingMode
+  fingerprint?: string
+  lastSuccessfulPairingAt?: string
+  lastHeartbeatAt?: string
+  recoveryReason?: string
+  hardRecoveryDeadlineAt?: string
+  pairingRequestInDoubtAt?: string
+  recentCommands?: RecentCommandRecord[]
+}
+
+export type BackendErrorCode =
+  | 'VALIDATION_ERROR'
+  | 'UNAUTHORIZED'
+  | 'FORBIDDEN'
+  | 'NOT_FOUND'
+  | 'CONFLICT'
+  | 'BAD_REQUEST'
+  | 'CA_CERT_MISSING'
+  | 'INTERNAL_ERROR'
+  | 'NETWORK_ERROR'
+
+export interface BackendErrorPayload {
+  success?: false
+  error?: {
+    code?: BackendErrorCode
+    message?: string
+    details?: unknown
+    traceId?: string
+  }
 }
 
 // ============================================================================
@@ -507,6 +578,33 @@ export class NetworkError extends AppError {
     super(message, 'NETWORK_ERROR', details)
     this.name = 'NetworkError'
   }
+}
+
+export class DeviceApiError extends AppError {
+  public readonly status?: number
+  public readonly traceId?: string
+  public readonly transient: boolean
+  public readonly detailsPayload?: unknown
+
+  constructor(args: {
+    message: string
+    code: BackendErrorCode
+    status?: number
+    traceId?: string
+    transient?: boolean
+    detailsPayload?: unknown
+  }) {
+    super(args.message, args.code, { status: args.status, traceId: args.traceId })
+    this.name = 'DeviceApiError'
+    this.status = args.status
+    this.traceId = args.traceId
+    this.transient = args.transient ?? false
+    this.detailsPayload = args.detailsPayload
+  }
+}
+
+export function isDeviceApiError(error: unknown): error is DeviceApiError {
+  return error instanceof DeviceApiError
 }
 
 export class CacheError extends AppError {

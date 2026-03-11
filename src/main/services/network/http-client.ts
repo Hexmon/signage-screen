@@ -1,25 +1,39 @@
-/**
- * HTTP Client - Axios-based client with mTLS support
- * Handles all HTTP communication with the backend
- */
-
 import axios, { AxiosHeaders, AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios'
+import type { AxiosError } from 'axios'
 import * as https from 'https'
 import { getLogger } from '../../../common/logger'
 import { getConfigManager } from '../../../common/config'
 import { getCertificateManager } from '../cert-manager'
-import { NetworkError } from '../../../common/types'
-import type { AppConfig } from '../../../common/types'
+import {
+  AppConfig,
+  BackendErrorCode,
+  BackendErrorPayload,
+  DeviceApiError,
+  NetworkError,
+} from '../../../common/types'
 import { retryWithBackoff } from '../../../common/utils'
-import { X509Certificate } from 'crypto'
+import { getDeviceStateStore } from '../device-state-store'
 
 const logger = getLogger('http-client')
+
+export interface RetryPolicy {
+  maxAttempts: number
+  baseDelayMs: number
+  maxDelayMs: number
+}
 
 declare module 'axios' {
   export interface AxiosRequestConfig {
     mtls?: boolean
     retry?: boolean
+    retryPolicy?: RetryPolicy
   }
+}
+
+const DEFAULT_RETRY_POLICY: RetryPolicy = {
+  maxAttempts: 3,
+  baseDelayMs: 2000,
+  maxDelayMs: 30000,
 }
 
 export class HttpClient {
@@ -39,256 +53,94 @@ export class HttpClient {
       },
     })
 
-    // Setup interceptors
     this.setupInterceptors()
-
     logger.info({ baseURL: config.apiBase, mtlsEnabled: this.mtlsEnabled }, 'HTTP client initialized')
   }
 
-  /**
-   * Setup request/response interceptors
-   */
   private setupInterceptors(): void {
-    // Request interceptor
     this.client.interceptors.request.use(
       async (config) => {
-        // Add mTLS certificates if enabled
         const shouldUseMtls = this.mtlsEnabled && config.mtls !== false && this.isHttpsRequest(config)
         if (shouldUseMtls) {
-          const httpsAgent = await this.createMTLSAgent()
-          config.httpsAgent = httpsAgent
+          config.httpsAgent = await this.createMTLSAgent()
         }
 
-        // Attach device identity header for device endpoints when available
         if (this.isDeviceEndpoint(config.url || '')) {
-          try {
-            const certManager = getCertificateManager()
-
-            // 1) Prefer persisted metadata to avoid parsing certificate on each request.
-            const metadata = certManager.getCertificateMetadata() as any
-            let serial: string | undefined = metadata?.serialNumber || metadata?.serial || metadata?.fingerprint
-
-            // 2) Fallback to parsing from the client certificate if metadata is unavailable.
-            if (!serial) {
-              const certs = await certManager.loadCertificates()
-              const x509 = new X509Certificate(certs.cert) // cert PEM
-              serial = x509.serialNumber // this is the certificate serial
-            }
-
-            if (!serial) {
-              logger.warn({ url: config.url }, 'No device certificate serial available; device auth headers not sent')
-            } else {
-              const headers = AxiosHeaders.from(config.headers ?? {})
-              headers.set('X-Device-Serial', serial)        // backend reads x-device-serial
-              headers.set('X-Device-Cert-Serial', serial)   // backend reads x-device-cert-serial
-              config.headers = headers
-            }
-          } catch (error) {
-            logger.warn({ error }, 'Failed to attach device identity header')
+          const state = getDeviceStateStore().getState()
+          const metadata = getCertificateManager().getCertificateMetadata()
+          const headerValue = state.fingerprint || metadata?.serialNumber || metadata?.fingerprint
+          if (!headerValue) {
+            logger.warn({ url: config.url }, 'No device auth header value available for device request')
+          } else {
+            const headers = AxiosHeaders.from(config.headers ?? {})
+            headers.set('x-device-serial', headerValue)
+            config.headers = headers
           }
         }
 
-        logger.debug({ method: config.method, url: config.url }, 'HTTP request')
         return config
       },
-      (error) => {
-        logger.error({ error }, 'Request interceptor error')
-        return Promise.reject(error)
-      }
+      (error) => Promise.reject(error)
     )
 
-    // Response interceptor
     this.client.interceptors.response.use(
-      (response) => {
-        logger.debug({ status: response.status, url: response.config.url }, 'HTTP response')
-        return response
-      },
-      (error) => {
-        if (error.response) {
-          logger.error(
-            {
-              status: error.response.status,
-              url: error.config?.url,
-              data: error.response.data,
-            },
-            'HTTP error response'
-          )
-        } else if (error.request) {
-          logger.error({ url: error.config?.url }, 'No response received')
-        } else {
-          logger.error({ error: error.message }, 'Request setup error')
-        }
-        return Promise.reject(error)
-      }
+      (response) => response,
+      (error) => Promise.reject(this.normalizeError(error))
     )
   }
 
-  private isHttpsRequest(config: AxiosRequestConfig): boolean {
-    const url = config.url || ''
-    if (url.startsWith('https://')) {
-      return true
-    }
-    if (url.startsWith('http://')) {
-      return false
-    }
-
-    const base = config.baseURL || this.client.defaults.baseURL || ''
-    if (base.startsWith('https://')) {
-      return true
-    }
-    if (base.startsWith('http://')) {
-      return false
-    }
-
-    return false
-  }
-
-  private isDeviceEndpoint(url: string): boolean {
-    if (!url) return false
-    if (url.startsWith('/api/v1/device')) return true
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      try {
-        const parsed = new URL(url)
-        return parsed.pathname.startsWith('/api/v1/device')
-      } catch {
-        return false
-      }
-    }
-    return false
-  }
-
-  private isRetryableError(error: any): boolean {
-    const status = error?.response?.status
-    if (!status) {
-      return true
-    }
-    if (status === 408 || status === 429) {
-      return true
-    }
-    if (status >= 500) {
-      return true
-    }
-    return false
-  }
-
-  /**
-   * Create HTTPS agent with mTLS certificates
-   */
-  private async createMTLSAgent(): Promise<https.Agent> {
-    try {
-      const certManager = getCertificateManager()
-      const certs = await certManager.loadCertificates()
-
-      return new https.Agent({
-        cert: certs.cert,
-        key: certs.key,
-        ca: certs.ca,
-        rejectUnauthorized: true,
-      })
-    } catch (error) {
-      logger.error({ error }, 'Failed to create mTLS agent')
-      throw new NetworkError('Failed to load mTLS certificates', { error })
-    }
-  }
-
-  /**
-   * GET request with retry
-   */
-  async get<T = any>(url: string, config?: AxiosRequestConfig): Promise<T> {
-    return retryWithBackoff(
+  async get<T = unknown>(url: string, config?: AxiosRequestConfig): Promise<T> {
+    return await this.executeWithRetry(
       async () => {
         const response = await this.client.get<T>(url, config)
         return response.data
       },
-      {
-        maxAttempts: 3,
-        baseDelayMs: 1000,
-        maxDelayMs: 10000,
-        onRetry: (attempt, error) => {
-          logger.warn({ url, attempt, error: error.message }, 'Retrying GET request')
-        },
-        shouldRetry: (_attempt, error) => this.isRetryableError(error),
-      }
+      url,
+      'GET',
+      config
     )
   }
 
-  /**
-   * POST request with retry
-   */
-  async post<T = any>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T> {
-    if (config?.retry === false) {
-      const response = await this.client.post<T>(url, data, config)
-      return response.data
-    }
-    return retryWithBackoff(
+  async post<T = unknown>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> {
+    return await this.executeWithRetry(
       async () => {
         const response = await this.client.post<T>(url, data, config)
         return response.data
       },
-      {
-        maxAttempts: 3,
-        baseDelayMs: 1000,
-        maxDelayMs: 10000,
-        onRetry: (attempt, error) => {
-          logger.warn({ url, attempt, error: error.message }, 'Retrying POST request')
-        },
-        shouldRetry: (_attempt, error) => this.isRetryableError(error),
-      }
+      url,
+      'POST',
+      config
     )
   }
 
-  /**
-   * PUT request with retry
-   */
-  async put<T = any>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T> {
-    return retryWithBackoff(
+  async put<T = unknown>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> {
+    return await this.executeWithRetry(
       async () => {
         const response = await this.client.put<T>(url, data, config)
         return response.data
       },
-      {
-        maxAttempts: 3,
-        baseDelayMs: 1000,
-        maxDelayMs: 10000,
-        onRetry: (attempt, error) => {
-          logger.warn({ url, attempt, error: error.message }, 'Retrying PUT request')
-        },
-        shouldRetry: (_attempt, error) => this.isRetryableError(error),
-      }
+      url,
+      'PUT',
+      config
     )
   }
 
-  /**
-   * DELETE request with retry
-   */
-  async delete<T = any>(url: string, config?: AxiosRequestConfig): Promise<T> {
-    return retryWithBackoff(
+  async delete<T = unknown>(url: string, config?: AxiosRequestConfig): Promise<T> {
+    return await this.executeWithRetry(
       async () => {
         const response = await this.client.delete<T>(url, config)
         return response.data
       },
-      {
-        maxAttempts: 3,
-        baseDelayMs: 1000,
-        maxDelayMs: 10000,
-        onRetry: (attempt, error) => {
-          logger.warn({ url, attempt, error: error.message }, 'Retrying DELETE request')
-        },
-        shouldRetry: (_attempt, error) => this.isRetryableError(error),
-      }
+      url,
+      'DELETE',
+      config
     )
   }
 
-  /**
-   * HEAD request (no retry for HEAD)
-   */
   async head(url: string, config?: AxiosRequestConfig): Promise<AxiosResponse> {
-    return this.client.head(url, config)
+    return await this.client.head(url, config)
   }
 
-  /**
-   * Check connectivity
-   */
   async checkConnectivity(): Promise<boolean> {
     const result = await this.checkConnectivityDetailed()
     return result.ok
@@ -311,6 +163,7 @@ export class HttpClient {
           timeout: 5000,
           validateStatus: () => true,
           mtls: false,
+          retry: false,
         })
 
         if (response.status >= 200 && response.status < 300) {
@@ -327,13 +180,12 @@ export class HttpClient {
         }
 
         lastError = `Health check returned ${response.status}`
-      } catch (error: any) {
-        const code = error?.code ? ` (${error.code})` : ''
-        lastError = `${error?.message || 'Unknown network error'}${code}`
+      } catch (error) {
+        const normalized = this.normalizeError(error)
+        lastError = normalized.message
       }
     }
 
-    logger.warn({ baseURL, error: lastError }, 'Connectivity check failed')
     return {
       ok: false,
       baseURL,
@@ -342,28 +194,16 @@ export class HttpClient {
     }
   }
 
-  /**
-   * Enable mTLS
-   */
   enableMTLS(): void {
     this.mtlsEnabled = true
-    logger.info('mTLS enabled')
   }
 
-  /**
-   * Disable mTLS
-   */
   disableMTLS(): void {
     this.mtlsEnabled = false
-    logger.info('mTLS disabled')
   }
 
-  /**
-   * Update base URL
-   */
   setBaseURL(baseURL: string): void {
     this.client.defaults.baseURL = baseURL
-    logger.info({ baseURL }, 'Base URL updated')
   }
 
   applyConfig(config: AppConfig): void {
@@ -371,15 +211,126 @@ export class HttpClient {
     this.setBaseURL(config.apiBase)
   }
 
-  /**
-   * Get axios instance for advanced usage
-   */
   getAxiosInstance(): AxiosInstance {
     return this.client
   }
+
+  private async executeWithRetry<T>(
+    fn: () => Promise<T>,
+    url: string,
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+    config?: AxiosRequestConfig
+  ): Promise<T> {
+    if (config?.retry === false) {
+      return await fn()
+    }
+
+    const policy = config?.retryPolicy || DEFAULT_RETRY_POLICY
+    return await retryWithBackoff(fn, {
+      maxAttempts: policy.maxAttempts,
+      baseDelayMs: policy.baseDelayMs,
+      maxDelayMs: policy.maxDelayMs,
+      shouldRetry: (_attempt, error) => this.isRetryableError(error),
+      onRetry: (attempt, error) => {
+        logger.warn({ url, method, attempt, error: error.message }, 'Retrying request')
+      },
+    })
+  }
+
+  private isHttpsRequest(config: AxiosRequestConfig): boolean {
+    const url = config.url || ''
+    if (url.startsWith('https://')) return true
+    if (url.startsWith('http://')) return false
+
+    const base = config.baseURL || this.client.defaults.baseURL || ''
+    if (base.startsWith('https://')) return true
+    if (base.startsWith('http://')) return false
+
+    return false
+  }
+
+  private isDeviceEndpoint(url: string): boolean {
+    if (!url) return false
+    if (url.startsWith('/api/v1/device')) return true
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      try {
+        const parsed = new URL(url)
+        return parsed.pathname.startsWith('/api/v1/device')
+      } catch {
+        return false
+      }
+    }
+    return false
+  }
+
+  private async createMTLSAgent(): Promise<https.Agent> {
+    try {
+      const certManager = getCertificateManager()
+      const certs = await certManager.loadCertificates()
+
+      return new https.Agent({
+        cert: certs.cert,
+        key: certs.key,
+        ca: certs.ca,
+        rejectUnauthorized: true,
+      })
+    } catch (error) {
+      logger.error({ error }, 'Failed to create mTLS agent')
+      throw new NetworkError('Failed to load mTLS certificates', { error: String(error) })
+    }
+  }
+
+  private isRetryableError(error: unknown): boolean {
+    if (error instanceof DeviceApiError) {
+      return error.transient
+    }
+    return false
+  }
+
+  private normalizeError(error: unknown): Error {
+    if (error instanceof DeviceApiError) {
+      return error
+    }
+
+    const axiosError = error as AxiosError<BackendErrorPayload>
+    const response = axiosError.response
+    const payload = response?.data?.error
+
+    if (response) {
+      const status = response.status
+      const code = (payload?.code || this.codeFromStatus(status)) as BackendErrorCode
+      const message = payload?.message || axiosError.message || `HTTP ${status}`
+      return new DeviceApiError({
+        status,
+        code,
+        message,
+        traceId: payload?.traceId,
+        detailsPayload: payload?.details,
+        transient: status === 408 || status === 429 || status >= 500,
+      })
+    }
+
+    const code = axiosError.code || ''
+    const message = axiosError.message || 'Network request failed'
+    return new DeviceApiError({
+      code: 'NETWORK_ERROR',
+      message,
+      transient: /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ERR_NETWORK/i.test(`${code} ${message}`),
+      detailsPayload: { code },
+    })
+  }
+
+  private codeFromStatus(status: number): BackendErrorCode {
+    if (status === 400) return 'BAD_REQUEST'
+    if (status === 401) return 'UNAUTHORIZED'
+    if (status === 403) return 'FORBIDDEN'
+    if (status === 404) return 'NOT_FOUND'
+    if (status === 409) return 'CONFLICT'
+    if (status === 422) return 'VALIDATION_ERROR'
+    return 'INTERNAL_ERROR'
+  }
 }
 
-// Singleton instance
 let httpClient: HttpClient | null = null
 
 export function getHttpClient(): HttpClient {

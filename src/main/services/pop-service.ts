@@ -7,10 +7,11 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { getLogger } from '../../common/logger'
 import { getConfigManager } from '../../common/config'
-import { ProofOfPlayEvent } from '../../common/types'
+import { DeviceApiError, ProofOfPlayEvent } from '../../common/types'
 import { atomicWrite, ensureDir, generateId } from '../../common/utils'
 import { getHttpClient } from './network/http-client'
 import { getPairingService } from './pairing-service'
+import { getLifecycleEvents } from './lifecycle-events'
 
 const logger = getLogger('pop-service')
 
@@ -226,8 +227,20 @@ export class ProofOfPlayService {
             ...event,
             device_id: event.device_id || deviceId,
           }
-          await httpClient.post('/api/v1/device/proof-of-play', payload)
+          await httpClient.post('/api/v1/device/proof-of-play', payload, {
+            retryPolicy: {
+              maxAttempts: 3,
+              baseDelayMs: 2000,
+              maxDelayMs: 30000,
+            },
+          })
         } catch (error) {
+          if (error instanceof DeviceApiError && (error.code === 'UNAUTHORIZED' || error.code === 'FORBIDDEN' || error.code === 'NOT_FOUND')) {
+            getLifecycleEvents().emitRuntimeAuthFailure({
+              source: 'proof-of-play',
+              error,
+            })
+          }
           logger.error({ error, event }, 'Failed to flush PoP event')
           failedEvents.push(event)
         }

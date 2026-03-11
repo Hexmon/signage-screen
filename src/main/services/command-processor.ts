@@ -1,20 +1,19 @@
-/**
- * Command Processor - Process remote commands from backend
- * Supports: REBOOT, REFRESH_SCHEDULE, SCREENSHOT, TEST_PATTERN, CLEAR_CACHE, PING
- */
-
 import { app } from 'electron'
 import { getLogger } from '../../common/logger'
 import { getConfigManager } from '../../common/config'
-import { Command, CommandResult, CommandType } from '../../common/types'
+import { Command, CommandResult, CommandType, DeviceApiError } from '../../common/types'
 import { getHttpClient } from './network/http-client'
 import { getRequestQueue } from './network/request-queue'
 import { getPairingService } from './pairing-service'
 import { getSnapshotManager } from './snapshot-manager'
 import { getCacheManager } from './cache/cache-manager'
 import { getScreenshotService } from './screenshot-service'
+import { getDeviceStateStore } from './device-state-store'
+import { getLifecycleEvents } from './lifecycle-events'
 
 const logger = getLogger('command-processor')
+
+type CommandSource = 'heartbeat' | 'poll'
 
 export class CommandProcessor {
   private pollInterval?: NodeJS.Timeout
@@ -23,21 +22,15 @@ export class CommandProcessor {
   private commandHistory: Map<string, CommandResult> = new Map()
   private maxHistorySize = 100
   private rateLimitMap: Map<CommandType, number> = new Map()
-  private rateLimitWindowMs = 60000 // 1 minute
+  private rateLimitWindowMs = 60000
 
-  /**
-   * Start command processor
-   */
   start(): void {
     if (this.isPolling) {
-      logger.warn('Command processor already running')
       return
     }
 
     const config = getConfigManager().getConfig()
     const intervalMs = config.intervals.commandPollMs
-
-    logger.info({ intervalMs }, 'Starting command processor')
 
     this.isPolling = true
     this.pollInterval = setInterval(() => {
@@ -46,75 +39,78 @@ export class CommandProcessor {
       })
     }, intervalMs)
 
-    // Initial poll
-    this.pollCommands().catch((error) => {
-      logger.error({ error }, 'Initial command poll failed')
-    })
+    void this.pollCommands()
   }
 
-  /**
-   * Stop command processor
-   */
   stop(): void {
-    if (!this.isPolling) {
-      return
-    }
-
-    logger.info('Stopping command processor')
-
     if (this.pollInterval) {
       clearInterval(this.pollInterval)
       this.pollInterval = undefined
     }
-
     this.isPolling = false
   }
 
-  /**
-   * Poll for commands from backend
-   */
-  private async pollCommands(): Promise<void> {
-    const pairingService = getPairingService()
-    const deviceId = pairingService.getDeviceId()
+  async ingestCommands(rawCommands: Command[], source: CommandSource): Promise<void> {
+    for (const rawCommand of rawCommands) {
+      const command = this.normalizeCommand(rawCommand)
+      if (getDeviceStateStore().hasRecentCommand(command.id)) {
+        logger.debug({ commandId: command.id, source }, 'Skipping previously seen command')
+        continue
+      }
 
+      await getDeviceStateStore().recordCommandSeen(command.id, source)
+      await this.processCommand(command)
+    }
+  }
+
+  private async pollCommands(): Promise<void> {
+    const deviceId = getPairingService().getDeviceId()
     if (!deviceId) {
-      logger.debug('Device not paired, skipping command poll')
       return
     }
 
     try {
       const httpClient = getHttpClient()
-      const response = await httpClient.get<{ commands: Command[] }>(`/api/v1/device/${deviceId}/commands`)
-      const commands = response?.commands || []
-
-      if (!commands || commands.length === 0) {
+      const response = await httpClient.get<{ commands: Command[] }>(`/api/v1/device/${deviceId}/commands`, {
+        retryPolicy: {
+          maxAttempts: 3,
+          baseDelayMs: 2000,
+          maxDelayMs: 30000,
+        },
+      })
+      await this.ingestCommands(response.commands || [], 'poll')
+    } catch (error) {
+      if (error instanceof DeviceApiError && (error.code === 'UNAUTHORIZED' || error.code === 'FORBIDDEN' || error.code === 'NOT_FOUND')) {
+        getLifecycleEvents().emitRuntimeAuthFailure({
+          source: 'command-poll',
+          error,
+        })
         return
       }
 
-      logger.info({ count: commands.length }, 'Received commands')
-
-      // Process commands sequentially
-      for (const command of commands) {
-        await this.processCommand(command)
-      }
-    } catch (error) {
       logger.error({ error }, 'Failed to poll commands')
     }
   }
 
-  /**
-   * Process a single command
-   */
+  private normalizeCommand(command: Command): Command {
+    const payload = command.params || (command as unknown as { payload?: Record<string, unknown> }).payload
+    let type = command.type
+    if (type === 'TAKE_SCREENSHOT') {
+      type = 'SCREENSHOT'
+    }
+    return {
+      ...command,
+      type,
+      params: payload,
+    }
+  }
+
   private async processCommand(command: Command): Promise<void> {
-    // Check if already processing
     if (this.processingCommands.has(command.id)) {
-      logger.debug({ commandId: command.id }, 'Command already being processed')
       return
     }
 
-    // Check rate limit
     if (this.isRateLimited(command.type)) {
-      logger.warn({ commandType: command.type }, 'Command rate limited')
       await this.acknowledgeCommand(command.id, {
         success: false,
         error: 'Rate limited',
@@ -125,37 +121,31 @@ export class CommandProcessor {
 
     this.processingCommands.add(command.id)
 
-    logger.info(
-      {
-        commandId: command.id,
-        type: command.type,
-        params: command.params,
-      },
-      'Processing command'
-    )
-
     try {
       let result: CommandResult
 
       switch (command.type) {
         case 'REBOOT':
-          result = await this.handleReboot(command)
+          result = await this.handleReboot()
           break
         case 'REFRESH':
         case 'REFRESH_SCHEDULE':
-          result = await this.handleRefreshSchedule(command)
+          result = await this.handleRefreshSchedule()
           break
         case 'SCREENSHOT':
-          result = await this.handleScreenshot(command)
+          result = await this.handleScreenshot()
+          break
+        case 'SET_SCREENSHOT_INTERVAL':
+          result = await this.handleSetScreenshotInterval(command)
           break
         case 'TEST_PATTERN':
-          result = await this.handleTestPattern(command)
+          result = await this.handleTestPattern()
           break
         case 'CLEAR_CACHE':
           result = await this.handleClearCache(command)
           break
         case 'PING':
-          result = await this.handlePing(command)
+          result = await this.handlePing()
           break
         default:
           result = {
@@ -165,25 +155,18 @@ export class CommandProcessor {
           }
       }
 
-      // Store in history
       this.commandHistory.set(command.id, result)
       if (this.commandHistory.size > this.maxHistorySize) {
-        const firstKey = this.commandHistory.keys().next().value
-        if (firstKey !== undefined) {
-          this.commandHistory.delete(firstKey)
+        const oldest = this.commandHistory.keys().next().value
+        if (oldest) {
+          this.commandHistory.delete(oldest)
         }
       }
 
-      // Acknowledge command
       await this.acknowledgeCommand(command.id, result)
-
-      // Update rate limit
       this.updateRateLimit(command.type)
-
-      logger.info({ commandId: command.id, success: result.success }, 'Command processed')
     } catch (error) {
       logger.error({ error, commandId: command.id }, 'Command processing failed')
-
       await this.acknowledgeCommand(command.id, {
         success: false,
         error: (error as Error).message,
@@ -194,138 +177,82 @@ export class CommandProcessor {
     }
   }
 
-  /**
-   * Handle REBOOT command
-   */
-  private async handleReboot(command: Command): Promise<CommandResult> {
-    logger.warn({ commandId: command.id }, 'Executing REBOOT command')
+  private async handleReboot(): Promise<CommandResult> {
+    setTimeout(() => {
+      app.relaunch()
+      app.quit()
+    }, 2000)
 
-    try {
-      // Graceful shutdown
-      setTimeout(() => {
-        app.relaunch()
-        app.quit()
-      }, 2000)
-
-      return {
-        success: true,
-        message: 'Reboot initiated',
-        timestamp: new Date().toISOString(),
-      }
-    } catch (error) {
-      return {
-        success: false,
-        error: (error as Error).message,
-        timestamp: new Date().toISOString(),
-      }
+    return {
+      success: true,
+      message: 'Reboot initiated',
+      timestamp: new Date().toISOString(),
     }
   }
 
-  /**
-   * Handle REFRESH_SCHEDULE command
-   */
-  private async handleRefreshSchedule(command: Command): Promise<CommandResult> {
-    logger.info({ commandId: command.id }, 'Executing REFRESH_SCHEDULE command')
-
-    try {
-      const snapshotManager = getSnapshotManager()
-      await snapshotManager.refreshSnapshot()
-
-      return {
-        success: true,
-        message: 'Schedule refreshed',
-        timestamp: new Date().toISOString(),
-      }
-    } catch (error) {
-      return {
-        success: false,
-        error: (error as Error).message,
-        timestamp: new Date().toISOString(),
-      }
+  private async handleRefreshSchedule(): Promise<CommandResult> {
+    await getSnapshotManager().refreshSnapshot()
+    return {
+      success: true,
+      message: 'Schedule refreshed',
+      timestamp: new Date().toISOString(),
     }
   }
 
-  /**
-   * Handle SCREENSHOT command
-   */
-  private async handleScreenshot(command: Command): Promise<CommandResult> {
-    logger.info({ commandId: command.id }, 'Executing SCREENSHOT command')
-
-    try {
-      const screenshotService = getScreenshotService()
-      const objectKey = await screenshotService.captureAndUpload()
-
-      return {
-        success: true,
-        message: 'Screenshot captured',
-        data: { objectKey },
-        timestamp: new Date().toISOString(),
-      }
-    } catch (error) {
-      return {
-        success: false,
-        error: (error as Error).message,
-        timestamp: new Date().toISOString(),
-      }
+  private async handleScreenshot(): Promise<CommandResult> {
+    const objectKey = await getScreenshotService().captureAndUpload()
+    return {
+      success: true,
+      message: 'Screenshot captured',
+      data: { objectKey },
+      timestamp: new Date().toISOString(),
     }
   }
 
-  /**
-   * Handle TEST_PATTERN command
-   */
-  private async handleTestPattern(command: Command): Promise<CommandResult> {
-    logger.info({ commandId: command.id }, 'Executing TEST_PATTERN command')
-
-    try {
-      // TODO: Display test pattern on screen
-      // This would send a message to the renderer to show a test pattern
-
-      return {
-        success: true,
-        message: 'Test pattern displayed',
-        timestamp: new Date().toISOString(),
-      }
-    } catch (error) {
+  private async handleSetScreenshotInterval(command: Command): Promise<CommandResult> {
+    const rawInterval = command.params?.['interval_ms'] ?? command.params?.['intervalMs']
+    const intervalMs = typeof rawInterval === 'number' ? Math.max(10000, Math.round(rawInterval)) : undefined
+    if (!intervalMs) {
       return {
         success: false,
-        error: (error as Error).message,
+        error: 'Missing screenshot interval',
         timestamp: new Date().toISOString(),
       }
     }
+
+    getConfigManager().updateConfig({
+      intervals: {
+        ...getConfigManager().getConfig().intervals,
+        screenshotMs: intervalMs,
+      },
+    })
+
+    return {
+      success: true,
+      message: `Screenshot interval updated to ${intervalMs}ms`,
+      timestamp: new Date().toISOString(),
+    }
   }
 
-  /**
-   * Handle CLEAR_CACHE command
-   */
+  private async handleTestPattern(): Promise<CommandResult> {
+    return {
+      success: true,
+      message: 'Test pattern command acknowledged',
+      timestamp: new Date().toISOString(),
+    }
+  }
+
   private async handleClearCache(command: Command): Promise<CommandResult> {
-    logger.info({ commandId: command.id }, 'Executing CLEAR_CACHE command')
-
-    try {
-      const cacheManager = getCacheManager()
-      const force = command.params?.['force'] === true
-
-      await cacheManager.clear(force)
-
-      return {
-        success: true,
-        message: 'Cache cleared',
-        timestamp: new Date().toISOString(),
-      }
-    } catch (error) {
-      return {
-        success: false,
-        error: (error as Error).message,
-        timestamp: new Date().toISOString(),
-      }
+    const force = command.params?.['force'] === true
+    await getCacheManager().clear(force)
+    return {
+      success: true,
+      message: 'Cache cleared',
+      timestamp: new Date().toISOString(),
     }
   }
 
-  /**
-   * Handle PING command
-   */
-  private async handlePing(command: Command): Promise<CommandResult> {
-    logger.debug({ commandId: command.id }, 'Executing PING command')
-
+  private async handlePing(): Promise<CommandResult> {
     return {
       success: true,
       message: 'Pong',
@@ -337,78 +264,60 @@ export class CommandProcessor {
     }
   }
 
-  /**
-   * Acknowledge command completion
-   */
   private async acknowledgeCommand(commandId: string, result: CommandResult): Promise<void> {
-    const pairingService = getPairingService()
-    const deviceId = pairingService.getDeviceId()
+    const deviceId = getPairingService().getDeviceId()
+    if (!deviceId) {
+      return
+    }
 
     try {
-      if (!deviceId) {
+      const httpClient = getHttpClient()
+      await httpClient.post(`/api/v1/device/${deviceId}/commands/${commandId}/ack`, {}, {
+        retryPolicy: {
+          maxAttempts: 3,
+          baseDelayMs: 2000,
+          maxDelayMs: 30000,
+        },
+      })
+      await getDeviceStateStore().recordCommandAcknowledged(commandId)
+      logger.debug({ commandId, success: result.success }, 'Command acknowledged')
+    } catch (error) {
+      if (error instanceof DeviceApiError && (error.code === 'UNAUTHORIZED' || error.code === 'FORBIDDEN' || error.code === 'NOT_FOUND')) {
+        getLifecycleEvents().emitRuntimeAuthFailure({
+          source: 'command-ack',
+          error,
+        })
         return
       }
 
-      const httpClient = getHttpClient()
-      await httpClient.post(`/api/v1/device/${deviceId}/commands/${commandId}/ack`, {})
-
-      logger.debug({ commandId, success: result.success }, 'Command acknowledged')
-    } catch (error) {
-      logger.error({ error, commandId }, 'Failed to acknowledge command')
-
-      try {
-        if (deviceId) {
-          const requestQueue = getRequestQueue()
-          await requestQueue.enqueue({
-            method: 'POST',
-            url: `/api/v1/device/${deviceId}/commands/${commandId}/ack`,
-            data: {},
-            maxRetries: 3,
-          })
-          logger.info({ commandId }, 'Command acknowledgment queued for retry')
-        }
-      } catch (queueError) {
-        logger.error({ error: queueError, commandId }, 'Failed to queue command acknowledgment')
-      }
+      const requestQueue = getRequestQueue()
+      await requestQueue.enqueue({
+        method: 'POST',
+        url: `/api/v1/device/${deviceId}/commands/${commandId}/ack`,
+        data: {},
+        maxRetries: 3,
+      })
     }
   }
 
-  /**
-   * Check if command type is rate limited
-   */
   private isRateLimited(commandType: CommandType): boolean {
     const lastExecution = this.rateLimitMap.get(commandType)
-    if (!lastExecution) {
-      return false
-    }
-
-    const now = Date.now()
-    return now - lastExecution < this.rateLimitWindowMs
+    return lastExecution !== undefined && Date.now() - lastExecution < this.rateLimitWindowMs
   }
 
-  /**
-   * Update rate limit for command type
-   */
   private updateRateLimit(commandType: CommandType): void {
     this.rateLimitMap.set(commandType, Date.now())
   }
 
-  /**
-   * Get command history
-   */
   getCommandHistory(): Map<string, CommandResult> {
     return new Map(this.commandHistory)
   }
 
-  /**
-   * Check if command is being processed
-   */
   isProcessing(commandId: string): boolean {
     return this.processingCommands.has(commandId)
   }
 }
 
-// Singleton instance
 let commandProcessor: CommandProcessor | null = null
 
 export function getCommandProcessor(): CommandProcessor {

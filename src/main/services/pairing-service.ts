@@ -1,8 +1,3 @@
-/**
- * Pairing Service - Device pairing with CSR generation
- * Handles the complete pairing flow including certificate generation and storage
- */
-
 import * as os from 'os'
 import { app, screen } from 'electron'
 import { getLogger } from '../../common/logger'
@@ -14,9 +9,12 @@ import {
   PairingRequest,
   PairingResponse,
   PairingStatusResponse,
+  PlayerState,
+  isDeviceApiError,
 } from '../../common/types'
 import { getCertificateManager } from './cert-manager'
 import { getHttpClient } from './network/http-client'
+import { getDeviceStateStore } from './device-state-store'
 
 const logger = getLogger('pairing-service')
 
@@ -37,47 +35,40 @@ export interface NetworkDiagnostics {
 }
 
 export class PairingService {
-  private isPaired = false
-  private deviceId?: string
-  private lastPairingCode?: string
-  private pairingExpiresAt?: string
-
-  constructor() {
-    this.loadPairingStatus()
-  }
-
-  /**
-   * Load pairing status from config
-   */
-  private loadPairingStatus(): void {
-    const config = getConfigManager().getConfig()
-    this.deviceId = config.deviceId
-    const certManager = getCertificateManager()
-    this.isPaired = Boolean(this.deviceId && certManager.areCertificatesPresent())
-
-    logger.info({ isPaired: this.isPaired, deviceId: this.deviceId }, 'Pairing status loaded')
-  }
-
-  /**
-   * Check if device is paired
-   */
   isPairedDevice(): boolean {
-    return this.isPaired
+    const certManager = getCertificateManager()
+    const state = getDeviceStateStore().getState()
+    return Boolean(this.getDeviceId() && (state.fingerprint || certManager.getCertificateMetadata()?.fingerprint) && certManager.areCertificatesPresent())
   }
 
-  /**
-   * Get device ID
-   */
   getDeviceId(): string | undefined {
-    return this.deviceId
+    return getDeviceStateStore().getState().deviceId || getConfigManager().getConfig().deviceId || undefined
   }
 
-  /**
-   * Get device information
-   */
+  hasTrustworthyDeviceId(): boolean {
+    const deviceId = this.getDeviceId()
+    return typeof deviceId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(deviceId)
+  }
+
+  getFingerprint(): string | undefined {
+    return getDeviceStateStore().getState().fingerprint
+  }
+
+  getLastPairingCode(): string | undefined {
+    return getDeviceStateStore().getState().pairingCode
+  }
+
+  getPairingExpiry(): string | undefined {
+    return getDeviceStateStore().getState().pairingExpiresAt
+  }
+
+  getLifecycleState(): PlayerState | undefined {
+    return getDeviceStateStore().getState().lifecycleState
+  }
+
   getDeviceInfo(): DeviceInfo {
     return {
-      deviceId: this.deviceId || '',
+      deviceId: this.getDeviceId() || '',
       hostname: os.hostname(),
       platform: os.platform(),
       arch: os.arch(),
@@ -87,200 +78,280 @@ export class PairingService {
     }
   }
 
-  /**
-   * Submit pairing request
-   */
-  async submitPairing(pairingCode: string): Promise<PairingResponse> {
-    logger.info({ pairingCode }, 'Submitting pairing request')
+  getDeviceAuthHeaderValue(): string | undefined {
+    const state = getDeviceStateStore().getState()
+    if (state.fingerprint) {
+      return state.fingerprint
+    }
+
+    const metadata = getCertificateManager().getCertificateMetadata()
+    return metadata?.serialNumber || metadata?.fingerprint
+  }
+
+  getStoredIdentityHealth(): { health: 'missing' | 'partial' | 'complete'; issues: string[] } {
+    const certManager = getCertificateManager()
+    const store = getDeviceStateStore()
+    const paths = certManager.getCertificatePaths()
+    return store.classifyIdentity(store.getIdentitySnapshot(paths))
+  }
+
+  async requestPairingCode(overrides: Partial<PairingCodeRequest> = {}): Promise<PairingCodeResponse> {
+    const payload = this.buildPairingCodeRequest(overrides)
+    const httpClient = getHttpClient()
 
     try {
-      // Validate pairing code format
-      if (!/^[A-Z0-9]{6}$/.test(pairingCode)) {
-        throw new Error('Invalid pairing code format. Must be 6 alphanumeric characters.')
-      }
-
-      // Get device info
-      const deviceInfo = this.getDeviceInfo()
-
-      // Generate CSR
-      const certManager = getCertificateManager()
-      const csr = await certManager.generateCSR(deviceInfo, {
-        commonName: deviceInfo.deviceId || this.deviceId || deviceInfo.hostname,
-      })
-
-      // Prepare pairing request
-      const request: PairingRequest = {
-        pairing_code: pairingCode,
-        csr,
-      }
-
-      // Submit to backend
-      const httpClient = getHttpClient()
-      const response = await httpClient.post<PairingResponse>('/api/v1/device-pairing/complete', request, {
+      const response = await httpClient.post<PairingCodeResponse>('/api/v1/device-pairing/request', payload, {
         mtls: false,
         retry: false,
       })
 
-      if (response.success === false) {
-        throw new Error('Pairing request was rejected by the server')
-      }
+      await getDeviceStateStore().update({
+        lifecycleState: 'PAIRING_PENDING',
+        deviceId: response.device_id,
+        pairingCode: response.pairing_code,
+        pairingExpiresAt: response.expires_at,
+        activePairingMode: 'PAIRING',
+        pairingRequestInDoubtAt: undefined,
+        recoveryReason: undefined,
+      })
 
-      // Complete pairing
-      await this.completePairing(response)
+      getConfigManager().updateConfig({
+        deviceId: response.device_id,
+      })
 
-      logger.info({ deviceId: response.device_id }, 'Pairing completed successfully')
       return response
     } catch (error) {
-      if (this.isNetworkError(error)) {
-        const apiBase = getConfigManager().getConfig().apiBase
-        logger.error({ apiBase, error }, 'Backend unreachable during pairing')
-        throw this.createBackendUnreachableError(error, apiBase)
-      }
-
-      const status = (error as any)?.response?.status
-      if (status === 404) {
-        logger.warn({ pairingCode }, 'Pairing code not found or expired')
-        const notFound = new Error('PAIRING_CODE_NOT_FOUND')
-        ;(notFound as any).status = 404
-        throw notFound
-      }
-
-      logger.error({ error, pairingCode }, 'Pairing failed')
+      logger.error({ error }, 'Failed to request pairing code')
       throw error
     }
   }
 
-  /**
-   * Fetch pairing status from backend
-   */
-  async fetchPairingStatus(): Promise<PairingStatusResponse> {
-    const deviceId = this.deviceId
+  async fetchPairingStatus(deviceIdOverride?: string): Promise<PairingStatusResponse> {
+    const deviceId = deviceIdOverride || this.getDeviceId()
 
     if (!deviceId) {
       return {
         device_id: '',
         paired: false,
+        confirmed: false,
         screen: null,
+        active_pairing: null,
       }
     }
 
-    try {
-      const httpClient = getHttpClient()
-      const status = await httpClient.get<PairingStatusResponse>(
-        `/api/v1/device-pairing/status?device_id=${encodeURIComponent(deviceId)}`,
-        { mtls: false }
-      )
-
-      this.updatePairingState(status.device_id, status.paired)
-      return status
-    } catch (error) {
-      if (this.isNetworkError(error)) {
-        const apiBase = getConfigManager().getConfig().apiBase
-        logger.error({ apiBase, error }, 'Backend unreachable while checking pairing status')
-        throw this.createBackendUnreachableError(error, apiBase)
-      }
-      throw error
-    }
+    const httpClient = getHttpClient()
+    return await httpClient.get<PairingStatusResponse>(
+      `/api/v1/device-pairing/status?device_id=${encodeURIComponent(deviceId)}`,
+      { mtls: false }
+    )
   }
 
-  /**
-   * Request a new pairing code from backend
-   */
-  async requestPairingCode(overrides: Partial<PairingCodeRequest> = {}): Promise<PairingCodeResponse> {
-    try {
-      const httpClient = getHttpClient()
-      const payload = this.buildPairingCodeRequest(overrides)
-      const response = await httpClient.post<PairingCodeResponse>('/api/v1/device-pairing/request', payload, {
-        mtls: false,
-      })
-
-      if (response.device_id) {
-        this.updatePairingState(response.device_id, false)
-      }
-
-      if (response.pairing_code) {
-        this.lastPairingCode = response.pairing_code
-      }
-      this.pairingExpiresAt = response.expires_at
-
-      return response
-    } catch (error) {
-      if (this.isNetworkError(error)) {
-        const apiBase = getConfigManager().getConfig().apiBase
-        logger.error({ apiBase, error }, 'Backend unreachable while requesting pairing code')
-        throw this.createBackendUnreachableError(error, apiBase)
-      }
-      throw error
+  async submitPairing(pairingCode: string): Promise<PairingResponse> {
+    if (!/^[A-Z0-9]{6}$/.test(pairingCode)) {
+      throw new Error('Invalid pairing code format. Must be 6 alphanumeric characters.')
     }
+
+    const deviceInfo = this.getDeviceInfo()
+    const certManager = getCertificateManager()
+    const csr = await certManager.generateCSR(deviceInfo, {
+      commonName: this.getDeviceId() || deviceInfo.hostname,
+    })
+
+    const request: PairingRequest = {
+      pairing_code: pairingCode,
+      csr,
+    }
+
+    const httpClient = getHttpClient()
+    const response = await httpClient.post<PairingResponse>('/api/v1/device-pairing/complete', request, {
+      mtls: false,
+      retry: false,
+    })
+
+    if (response.success === false) {
+      throw new Error('Pairing request was rejected by the server')
+    }
+
+    await this.completePairing(response)
+    return response
   }
 
-  /**
-   * Complete pairing and store credentials
-   */
   async completePairing(response: PairingResponse): Promise<void> {
-    logger.info({ deviceId: response.device_id, success: response.success }, 'Completing pairing')
-
-    try {
-      const config = getConfigManager()
-      const currentConfig = config.getConfig()
-
-      if (!response.device_id) {
-        throw new Error('Pairing response missing device_id')
-      }
-
-      // Store certificates if provided
-      const hasCertificates = !!(response.certificate && response.ca_certificate)
-      if (hasCertificates) {
-        const certManager = getCertificateManager()
-        await certManager.storeCertificate(response.certificate!, response.ca_certificate!)
-      }
-
-      // Update configuration
-      config.updateConfig({
-        deviceId: response.device_id,
-        mtls: {
-          ...currentConfig.mtls,
-          enabled: hasCertificates ? true : currentConfig.mtls.enabled,
-        },
-      })
-
-      // Update internal state
-      this.deviceId = response.device_id
-      this.isPaired = true
-
-      const httpClient = getHttpClient()
-      // Enable mTLS on clients when certificates are provided
-      if (hasCertificates) {
-        httpClient.enableMTLS()
-        logger.info('mTLS enabled from pairing response')
-      } else {
-        logger.warn('Pairing response did not include certificates, keeping mTLS disabled')
-      }
-
-      logger.info('Pairing completed and configuration updated')
-    } catch (error) {
-      logger.error({ error }, 'Failed to complete pairing')
-      throw error
+    if (!response.device_id) {
+      throw new Error('Pairing response missing device_id')
     }
-  }
-
-  private updatePairingState(deviceId: string, paired: boolean): void {
-    if (deviceId && deviceId !== this.deviceId) {
-      const config = getConfigManager()
-      config.updateConfig({
-        deviceId,
-      })
-      this.deviceId = deviceId
+    if (!response.certificate || !response.ca_certificate) {
+      throw new Error('Pairing response missing certificate material')
+    }
+    if (!response.fingerprint) {
+      throw new Error('Pairing response missing fingerprint')
     }
 
     const certManager = getCertificateManager()
-    this.isPaired = paired && certManager.areCertificatesPresent()
+    await certManager.storeCertificate(response.certificate, response.ca_certificate)
+
+    await getDeviceStateStore().update({
+      lifecycleState: 'BOOTSTRAP_AUTH',
+      deviceId: response.device_id,
+      fingerprint: response.fingerprint,
+      pairingCode: undefined,
+      pairingExpiresAt: undefined,
+      activePairingMode: undefined,
+      pairingRequestInDoubtAt: undefined,
+      recoveryReason: undefined,
+      hardRecoveryDeadlineAt: undefined,
+      lastSuccessfulPairingAt: new Date().toISOString(),
+    })
+
+    getConfigManager().updateConfig({
+      deviceId: response.device_id,
+      mtls: {
+        ...getConfigManager().getConfig().mtls,
+        enabled: false,
+      },
+    })
+  }
+
+  async markPairingRequestInDoubt(reason: string): Promise<void> {
+    logger.warn({ reason }, 'Pairing request outcome is ambiguous')
+    await getDeviceStateStore().update({
+      pairingRequestInDoubtAt: new Date().toISOString(),
+      recoveryReason: reason,
+    })
+  }
+
+  async clearPairingMetadata(): Promise<void> {
+    await getDeviceStateStore().clearPairingMetadata()
+  }
+
+  async markLastHeartbeat(timestamp: string): Promise<void> {
+    await getDeviceStateStore().update({
+      lastHeartbeatAt: timestamp,
+    })
+  }
+
+  async resetStoredIdentity(reason?: string): Promise<void> {
+    await getCertificateManager().deleteCertificates()
+    await getDeviceStateStore().clearIdentity(reason)
+    getConfigManager().updateConfig({
+      deviceId: '',
+      mtls: {
+        ...getConfigManager().getConfig().mtls,
+        enabled: false,
+      },
+    })
+  }
+
+  async markRecoveryState(state: Extract<PlayerState, 'RECOVERY_REQUIRED' | 'HARD_RECOVERY'>, reason: string): Promise<void> {
+    await getDeviceStateStore().update({
+      lifecycleState: state,
+      recoveryReason: reason,
+    })
+  }
+
+  async checkCertificateRenewal(): Promise<void> {
+    const identityHealth = this.getStoredIdentityHealth()
+    if (identityHealth.health !== 'complete') {
+      return
+    }
+
+    const config = getConfigManager().getConfig()
+    if (!config.mtls.autoRenew) {
+      return
+    }
+
+    const certManager = getCertificateManager()
+    const needsRenewal = await certManager.needsRenewal()
+    if (needsRenewal) {
+      logger.warn('Certificate is nearing expiry; backend runtime auth does not currently enforce expiry automatically')
+    }
+  }
+
+  async runDiagnostics(): Promise<NetworkDiagnostics> {
+    logger.info('Running network diagnostics')
+
+    const diagnostics: NetworkDiagnostics = {
+      hostname: os.hostname(),
+      ipAddresses: this.getIPAddresses(),
+      dnsResolution: false,
+      apiReachable: false,
+      wsReachable: false,
+    }
+
+    try {
+      const config = getConfigManager().getConfig()
+      const apiUrl = new URL(config.apiBase)
+      const dns = await import('dns')
+      await new Promise<void>((resolve, reject) => {
+        dns.resolve4(apiUrl.hostname, (err) => {
+          if (err) reject(err)
+          else resolve()
+        })
+      })
+      diagnostics.dnsResolution = true
+    } catch (error) {
+      logger.warn({ error }, 'DNS resolution failed')
+    }
+
+    try {
+      const httpClient = getHttpClient()
+      const startTime = Date.now()
+      const result = await httpClient.checkConnectivityDetailed()
+      diagnostics.apiReachable = result.ok
+      diagnostics.apiBase = result.baseURL
+      diagnostics.apiEndpoint = result.endpoint
+      diagnostics.apiStatus = result.status
+      diagnostics.apiError = result.error
+      diagnostics.latency = Date.now() - startTime
+    } catch (error) {
+      logger.warn({ error }, 'API reachability test failed')
+    }
+
+    diagnostics.wsReachable = false
+    return diagnostics
+  }
+
+  isRetryablePairingRequestError(error: unknown): boolean {
+    if (isDeviceApiError(error)) {
+      return error.transient
+    }
+    return false
+  }
+
+  shouldRetryPairingComplete(error: unknown): boolean {
+    if (!isDeviceApiError(error)) {
+      return false
+    }
+    if (error.code === 'CONFLICT' && error.message.includes('Pairing not confirmed')) {
+      return true
+    }
+    return error.transient
+  }
+
+  isExpiredPairingCodeError(error: unknown): boolean {
+    return isDeviceApiError(error) && error.code === 'NOT_FOUND'
+  }
+
+  isPairingNotConfirmedError(error: unknown): boolean {
+    return isDeviceApiError(error) && error.code === 'CONFLICT' && error.message.includes('Pairing not confirmed')
+  }
+
+  isDeviceNotRegisteredError(error: unknown): boolean {
+    return isDeviceApiError(error) && error.code === 'NOT_FOUND' && error.message.includes('Device not registered')
+  }
+
+  isInvalidCredentialError(error: unknown): boolean {
+    return isDeviceApiError(error) && (error.code === 'FORBIDDEN' || error.code === 'UNAUTHORIZED')
+  }
+
+  isTransientRuntimeError(error: unknown): boolean {
+    return isDeviceApiError(error) ? error.transient : false
   }
 
   private buildPairingCodeRequest(overrides: Partial<PairingCodeRequest> = {}): PairingCodeRequest {
-    const display = screen.getPrimaryDisplay()
-    const width = display.workAreaSize.width
-    const height = display.workAreaSize.height
+    const display = typeof screen?.getPrimaryDisplay === 'function' ? screen.getPrimaryDisplay() : undefined
+    const width = display?.workAreaSize.width ?? 0
+    const height = display?.workAreaSize.height ?? 0
     const hasValidDimensions = Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0
     const orientation = hasValidDimensions && width >= height ? 'landscape' : 'portrait'
 
@@ -329,14 +400,6 @@ export class PairingService {
     return `${Math.round(width / divisor)}:${Math.round(height / divisor)}`
   }
 
-  getLastPairingCode(): string | undefined {
-    return this.lastPairingCode
-  }
-
-  getPairingExpiry(): string | undefined {
-    return this.pairingExpiresAt
-  }
-
   private getGreatestCommonDivisor(a: number, b: number): number {
     let x = Math.abs(a)
     let y = Math.abs(b)
@@ -350,77 +413,6 @@ export class PairingService {
     return x || 1
   }
 
-  private isNetworkError(error: any): boolean {
-    if (!error) return false
-    if (error.response) return false
-    const code = error.code
-    if (code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'ETIMEDOUT') {
-      return true
-    }
-    const message = String(error.message || '')
-    return /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET/i.test(message)
-  }
-
-  private createBackendUnreachableError(error: any, apiBase: string): Error {
-    const message = `Backend unreachable at ${apiBase}. Check backend host binding, firewall, and LAN IP.`
-    const err = new Error(message)
-    ;(err as any).cause = error
-    ;(err as any).code = error?.code
-    return err
-  }
-
-  /**
-   * Run network diagnostics
-   */
-  async runDiagnostics(): Promise<NetworkDiagnostics> {
-    logger.info('Running network diagnostics')
-
-    const diagnostics: NetworkDiagnostics = {
-      hostname: os.hostname(),
-      ipAddresses: this.getIPAddresses(),
-      dnsResolution: false,
-      apiReachable: false,
-      wsReachable: false,
-    }
-
-    try {
-      // Test DNS resolution
-      const config = getConfigManager().getConfig()
-      const apiUrl = new URL(config.apiBase)
-      const dns = await import('dns')
-      await new Promise<void>((resolve, reject) => {
-        dns.resolve4(apiUrl.hostname, (err) => {
-          if (err) reject(err)
-          else resolve()
-        })
-      })
-      diagnostics.dnsResolution = true
-      logger.debug('DNS resolution successful')
-    } catch (error) {
-      logger.warn({ error }, 'DNS resolution failed')
-    }
-
-    try {
-      // Test API reachability
-      const httpClient = getHttpClient()
-      const startTime = Date.now()
-      const isReachable = await httpClient.checkConnectivity()
-      diagnostics.apiReachable = isReachable
-      diagnostics.latency = Date.now() - startTime
-      logger.debug({ latency: diagnostics.latency }, 'API reachability test completed')
-    } catch (error) {
-      logger.warn({ error }, 'API reachability test failed')
-    }
-
-    diagnostics.wsReachable = false
-
-    logger.info({ diagnostics }, 'Network diagnostics completed')
-    return diagnostics
-  }
-
-  /**
-   * Get IP addresses
-   */
   private getIPAddresses(): string[] {
     const interfaces = os.networkInterfaces()
     const addresses: string[] = []
@@ -438,68 +430,8 @@ export class PairingService {
 
     return addresses
   }
-
-  /**
-   * Unpair device (for testing)
-   */
-  async unpair(): Promise<void> {
-    logger.warn('Unpairing device')
-
-    try {
-      // Delete certificates
-      const certManager = getCertificateManager()
-      await certManager.deleteCertificates()
-
-      // Clear device ID from config
-      const config = getConfigManager()
-      config.updateConfig({
-        deviceId: '',
-        mtls: {
-          ...config.getConfig().mtls,
-          enabled: false,
-        },
-      })
-
-      // Update internal state
-      this.deviceId = undefined
-      this.isPaired = false
-
-      // Disable mTLS on clients
-      const httpClient = getHttpClient()
-      httpClient.disableMTLS()
-
-      logger.info('Device unpaired successfully')
-    } catch (error) {
-      logger.error({ error }, 'Failed to unpair device')
-      throw error
-    }
-  }
-
-  /**
-   * Check certificate renewal
-   */
-  async checkCertificateRenewal(): Promise<void> {
-    if (!this.isPaired) {
-      return
-    }
-
-    const config = getConfigManager().getConfig()
-    if (!config.mtls.autoRenew) {
-      return
-    }
-
-    const certManager = getCertificateManager()
-    const needsRenewal = await certManager.needsRenewal()
-
-    if (needsRenewal) {
-      logger.info('Certificate renewal needed')
-      // TODO: Implement certificate renewal flow
-      // This would involve generating a new CSR and submitting to backend
-    }
-  }
 }
 
-// Singleton instance
 let pairingService: PairingService | null = null
 
 export function getPairingService(): PairingService {
