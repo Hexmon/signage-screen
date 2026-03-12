@@ -118,6 +118,7 @@ describe('Player Flow', () => {
     await playerFlow.start()
 
     expect(playerFlow.getState()).to.equal('PAIRED_RUNTIME')
+    expect(playerFlow.getStatus().pairingCode).to.equal(undefined)
     expect(stubs.httpClient.get.calledOnce).to.equal(true)
     expect(stubs.heartbeatService.sendImmediate.calledOnce).to.equal(true)
 
