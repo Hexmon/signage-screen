@@ -38,30 +38,38 @@ function normalizeMediaItem(input: any): DefaultMediaItem | null {
 
 export function normalizeDefaultMediaResponse(raw: unknown): DefaultMediaResponse {
   if (!raw || typeof raw !== 'object') {
-    return { media_id: null, media: null }
+    return { source: 'NONE', aspect_ratio: null, media_id: null, media: null }
   }
 
   const payload = raw as any
+  const source =
+    payload.source === 'ASPECT_RATIO' || payload.source === 'GLOBAL' || payload.source === 'NONE'
+      ? payload.source
+      : undefined
+  const aspectRatio = typeof payload.aspect_ratio === 'string' ? payload.aspect_ratio : null
   const mediaId = typeof payload.media_id === 'string' ? payload.media_id : null
   const media = normalizeMediaItem(payload.media)
 
   if (!mediaId || !media) {
-    return { media_id: null, media: null }
+    return { source: source || 'NONE', aspect_ratio: aspectRatio, media_id: null, media: null }
   }
 
-  return { media_id: mediaId, media }
+  return { source: source || 'GLOBAL', aspect_ratio: aspectRatio, media_id: mediaId, media }
 }
 
 export class SettingsClient {
-  async getDefaultMedia(): Promise<DefaultMediaResponse> {
+  async getDefaultMedia(deviceId: string): Promise<DefaultMediaResponse> {
     const httpClient = getHttpClient()
-    const response = await httpClient.get('/api/v1/settings/default-media')
+    const response = await httpClient.get(`/api/v1/device/${deviceId}/default-media`)
     const normalized = normalizeDefaultMediaResponse(response)
 
     if (!normalized.media_id || !normalized.media) {
-      logger.debug('Default media not set')
+      logger.debug({ deviceId, source: normalized.source }, 'Resolved default media not set')
     } else {
-      logger.debug({ mediaId: normalized.media_id, type: normalized.media.type }, 'Default media fetched')
+      logger.debug(
+        { deviceId, mediaId: normalized.media_id, type: normalized.media.type, source: normalized.source, aspectRatio: normalized.aspect_ratio },
+        'Resolved default media fetched'
+      )
     }
 
     return normalized

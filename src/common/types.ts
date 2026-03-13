@@ -84,9 +84,13 @@ export interface DefaultMediaItem {
   type: DefaultMediaType
   source_content_type?: string
   media_url: string
+  local_path?: string
+  local_url?: string
 }
 
 export interface DefaultMediaResponse {
+  source?: 'ASPECT_RATIO' | 'GLOBAL' | 'NONE'
+  aspect_ratio?: string | null
   media_id: string | null
   media: DefaultMediaItem | null
 }

@@ -9,6 +9,10 @@ export interface DefaultMediaPlayerOptions {
   onRefreshRequested?: (reason: string) => void
 }
 
+export function resolveDefaultMediaSource(media: DefaultMediaItem): string {
+  return media.local_url || media.media_url
+}
+
 export class DefaultMediaPlayer {
   private container: HTMLElement
   private content: HTMLElement
@@ -137,7 +141,7 @@ export class DefaultMediaPlayer {
 
   private renderImage(media: DefaultMediaItem): HTMLElement {
     const img = document.createElement('img')
-    img.src = media.media_url
+    img.src = resolveDefaultMediaSource(media)
     img.style.width = '100%'
     img.style.height = '100%'
     img.style.objectFit = 'contain'
@@ -156,7 +160,7 @@ export class DefaultMediaPlayer {
 
   private renderVideo(media: DefaultMediaItem): HTMLElement {
     const video = document.createElement('video')
-    video.src = media.media_url
+    video.src = resolveDefaultMediaSource(media)
     video.autoplay = true
     video.loop = true
     video.muted = true
@@ -183,7 +187,7 @@ export class DefaultMediaPlayer {
   private renderDocument(media: DefaultMediaItem): HTMLElement {
     if (this.isPdf(media)) {
       const iframe = document.createElement('iframe')
-      iframe.src = media.media_url
+      iframe.src = resolveDefaultMediaSource(media)
       iframe.style.width = '100%'
       iframe.style.height = '100%'
       iframe.style.border = '0'

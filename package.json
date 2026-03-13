@@ -31,6 +31,7 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,json}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,json}\"",
     "test": "npm run test:unit && npm run test:integration",
+    "test:default-media": "mocha --config .mocharc.json --spec 'test/unit/services/settings-client.test.ts' --spec 'test/unit/services/default-media-service.test.ts' --spec 'test/unit/services/player-flow.test.ts' --spec 'test/unit/renderer/default-media-player.test.ts'",
     "test:unit": "mocha --config .mocharc.json --spec 'test/unit/**/*.test.ts'",
     "test:integration": "mocha --config .mocharc.json --timeout 10000 --spec 'test/integration/**/*.test.ts'",
     "test:performance": "mocha --config .mocharc.json --timeout 30000 --spec 'test/performance/**/*.test.ts'",

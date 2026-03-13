@@ -1,15 +1,17 @@
 /**
- * Default Media Service - Poll CMS settings for fallback media
+ * Default Media Service - Poll the backend for the resolved device fallback media
  */
 
 import { BrowserWindow } from 'electron'
 import { EventEmitter } from 'events'
 import * as fs from 'fs'
 import * as path from 'path'
+import { pathToFileURL } from 'url'
 import { getLogger } from '../../../common/logger'
 import { getConfigManager } from '../../../common/config'
 import { DefaultMediaResponse } from '../../../common/types'
 import { atomicWrite, ensureDir } from '../../../common/utils'
+import { getCacheManager } from '../cache/cache-manager'
 import { getPairingService } from '../pairing-service'
 import { getSettingsClient, normalizeDefaultMediaResponse } from './settings-client'
 
@@ -18,7 +20,7 @@ const logger = getLogger('default-media-service')
 export class DefaultMediaService extends EventEmitter {
   private mainWindow?: BrowserWindow
   private pollInterval?: NodeJS.Timeout
-  private current: DefaultMediaResponse = { media_id: null, media: null }
+  private current: DefaultMediaResponse = { source: 'NONE', aspect_ratio: null, media_id: null, media: null }
   private cachePath: string
   private isRunning = false
   private refreshPromise?: Promise<DefaultMediaResponse>
@@ -28,7 +30,7 @@ export class DefaultMediaService extends EventEmitter {
     const config = getConfigManager().getConfig()
     this.cachePath = path.join(config.cache.path, 'default-media.json')
     ensureDir(path.dirname(this.cachePath), 0o755)
-    this.loadCached()
+    void this.loadCached()
   }
 
   initialize(mainWindow: BrowserWindow): void {
@@ -90,14 +92,16 @@ export class DefaultMediaService extends EventEmitter {
 
   private async fetchAndUpdate(reason: string): Promise<DefaultMediaResponse> {
     const pairingService = getPairingService()
-    if (!pairingService.isPairedDevice()) {
+    const deviceId = pairingService.getDeviceId()
+    if (!pairingService.isPairedDevice() || !deviceId) {
       logger.debug('Skipping default media fetch: device not paired')
       return this.current
     }
 
     try {
       const settingsClient = getSettingsClient()
-      const next = await settingsClient.getDefaultMedia()
+      const fetched = await settingsClient.getDefaultMedia(deviceId)
+      const next = await this.hydrateWithCache(fetched)
       const changed = this.hasChanged(this.current, next)
 
       this.current = next
@@ -112,7 +116,10 @@ export class DefaultMediaService extends EventEmitter {
         }
       }
 
-      logger.info({ reason, changed, hasMedia: Boolean(next.media_id) }, 'Default media refreshed')
+      logger.info(
+        { reason, changed, hasMedia: Boolean(next.media_id), source: next.source, aspectRatio: next.aspect_ratio },
+        'Default media refreshed'
+      )
       return next
     } catch (error) {
       logger.warn({ error, reason }, 'Failed to refresh default media')
@@ -125,6 +132,10 @@ export class DefaultMediaService extends EventEmitter {
       return true
     }
 
+    if (previous.source !== next.source || previous.aspect_ratio !== next.aspect_ratio) {
+      return true
+    }
+
     if (!previous.media || !next.media) {
       return previous.media !== next.media
     }
@@ -132,13 +143,14 @@ export class DefaultMediaService extends EventEmitter {
     return (
       previous.media.id !== next.media.id ||
       previous.media.media_url !== next.media.media_url ||
+      previous.media.local_url !== next.media.local_url ||
       previous.media.type !== next.media.type ||
       previous.media.name !== next.media.name ||
       previous.media.source_content_type !== next.media.source_content_type
     )
   }
 
-  private loadCached(): void {
+  private async loadCached(): Promise<void> {
     if (!fs.existsSync(this.cachePath)) {
       return
     }
@@ -146,9 +158,10 @@ export class DefaultMediaService extends EventEmitter {
     try {
       const raw = JSON.parse(fs.readFileSync(this.cachePath, 'utf-8'))
       const cached = normalizeDefaultMediaResponse(raw)
-      this.current = cached
-      if (cached.media_id) {
-        logger.info({ mediaId: cached.media_id }, 'Loaded cached default media')
+      const hydrated = await this.hydrateFromExistingCache(cached)
+      this.current = hydrated
+      if (hydrated.media_id) {
+        logger.info({ mediaId: hydrated.media_id }, 'Loaded cached default media')
       }
     } catch (error) {
       logger.warn({ error }, 'Failed to load cached default media')
@@ -157,6 +170,68 @@ export class DefaultMediaService extends EventEmitter {
 
   private async persistCache(payload: DefaultMediaResponse): Promise<void> {
     await atomicWrite(this.cachePath, JSON.stringify(payload, null, 2))
+  }
+
+  private async hydrateWithCache(payload: DefaultMediaResponse): Promise<DefaultMediaResponse> {
+    const media = payload.media
+    const mediaId = payload.media_id
+
+    if (!media || !mediaId) {
+      return payload
+    }
+
+    const cacheManager = getCacheManager()
+
+    try {
+      if (media.media_url) {
+        await cacheManager.add(mediaId, media.media_url)
+      }
+    } catch (error) {
+      logger.warn({ error, mediaId }, 'Failed to cache resolved default media')
+    }
+
+    const localPath = await cacheManager.get(mediaId)
+    if (!localPath) {
+      return payload
+    }
+
+    return {
+      ...payload,
+      media: {
+        ...media,
+        local_path: localPath,
+        local_url: pathToFileURL(localPath).toString(),
+      },
+    }
+  }
+
+  private async hydrateFromExistingCache(payload: DefaultMediaResponse): Promise<DefaultMediaResponse> {
+    const media = payload.media
+    const mediaId = payload.media_id
+
+    if (!media || !mediaId) {
+      return payload
+    }
+
+    try {
+      const cacheManager = getCacheManager()
+      const localPath = await cacheManager.get(mediaId)
+      if (!localPath) {
+        return payload
+      }
+
+      return {
+        ...payload,
+        media: {
+          ...media,
+          local_path: localPath,
+          local_url: pathToFileURL(localPath).toString(),
+        },
+      }
+    } catch (error) {
+      logger.warn({ error, mediaId }, 'Failed to hydrate cached default media')
+      return payload
+    }
   }
 }
 

@@ -18,6 +18,8 @@
 - If cached playable content exists, keep it visible during bootstrap and transient backend failures.
 - Do not black-screen on temporary backend/network issues.
 - Replace cached playback once a fresh authenticated snapshot is available.
+- Resolved default media is cached locally for the paired device and is reused during `offline` and `empty` fallback modes when available.
+- Default media rendering uses `contain` and reuses the same aspect-ratio-specific fallback across different resolutions of the same aspect ratio.
 
 ## Proof-of-play policy
 - Proof-of-play is queued locally when offline.
