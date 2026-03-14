@@ -415,4 +415,70 @@ describe('Player Flow', () => {
     expect(playerFlow.getState()).to.equal('PAIRED_RUNTIME')
     await playerFlow.stop()
   })
+
+  it('should skip scheduled screenshot capture when the screenshot policy is disabled', async () => {
+    const clock = sandbox.useFakeTimers()
+    const { getPlayerFlow } = require('../../../src/main/services/player-flow')
+    const { getDeviceStateStore } = require('../../../src/main/services/device-state-store')
+    const { getPairingService } = require('../../../src/main/services/pairing-service')
+    const { getScreenshotService } = require('../../../src/main/services/screenshot-service')
+
+    const stateStore = getDeviceStateStore()
+    await stateStore.clearIdentity()
+    await stateStore.update({
+      deviceId: '11111111-1111-4111-8111-111111111111',
+      fingerprint: 'fingerprint-1',
+    })
+
+    const pairingService = getPairingService()
+    sandbox.stub(pairingService, 'getStoredIdentityHealth').returns({ health: 'complete', issues: [] })
+    sandbox.stub(pairingService, 'hasTrustworthyDeviceId').returns(true)
+
+    createCompleteBootstrapStubs()
+    const screenshotService = getScreenshotService()
+    sandbox.stub(screenshotService, 'isCaptureEnabled').returns(false)
+    const captureStub = sandbox.stub(screenshotService, 'captureAndUpload').resolves('object-key')
+
+    const playerFlow = getPlayerFlow()
+    await playerFlow.start()
+    await clock.tickAsync(300000)
+
+    expect(playerFlow.getState()).to.equal('PAIRED_RUNTIME')
+    expect(captureStub.called).to.equal(false)
+
+    await playerFlow.stop()
+  })
+
+  it('should keep runtime active when scheduled screenshot upload fails', async () => {
+    const clock = sandbox.useFakeTimers()
+    const { getPlayerFlow } = require('../../../src/main/services/player-flow')
+    const { getDeviceStateStore } = require('../../../src/main/services/device-state-store')
+    const { getPairingService } = require('../../../src/main/services/pairing-service')
+    const { getScreenshotService } = require('../../../src/main/services/screenshot-service')
+
+    const stateStore = getDeviceStateStore()
+    await stateStore.clearIdentity()
+    await stateStore.update({
+      deviceId: '11111111-1111-4111-8111-111111111111',
+      fingerprint: 'fingerprint-1',
+    })
+
+    const pairingService = getPairingService()
+    sandbox.stub(pairingService, 'getStoredIdentityHealth').returns({ health: 'complete', issues: [] })
+    sandbox.stub(pairingService, 'hasTrustworthyDeviceId').returns(true)
+
+    createCompleteBootstrapStubs()
+    const screenshotService = getScreenshotService()
+    sandbox.stub(screenshotService, 'isCaptureEnabled').returns(true)
+    const captureStub = sandbox.stub(screenshotService, 'captureAndUpload').rejects(new Error('upload failed'))
+
+    const playerFlow = getPlayerFlow()
+    await playerFlow.start()
+    await clock.tickAsync(300000)
+
+    expect(captureStub.calledOnce).to.equal(true)
+    expect(playerFlow.getState()).to.equal('PAIRED_RUNTIME')
+
+    await playerFlow.stop()
+  })
 })

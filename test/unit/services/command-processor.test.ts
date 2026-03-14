@@ -122,4 +122,51 @@ describe('Command Processor', () => {
     const store = getDeviceStateStore()
     expect(store.hasRecentCommand('cmd-2')).to.equal(true)
   })
+
+  it('should apply screenshot interval commands using interval_seconds and enable capture', async () => {
+    const { getCommandProcessor } = require('../../../src/main/services/command-processor')
+    const { getConfigManager } = require('../../../src/common/config')
+    const { getScreenshotService } = require('../../../src/main/services/screenshot-service')
+
+    const commandProcessor = getCommandProcessor()
+    const screenshotService = getScreenshotService()
+    const enableStub = sandbox.stub(screenshotService, 'setCaptureEnabled')
+
+    const result = await commandProcessor.handleSetScreenshotInterval({
+      id: 'cmd-interval',
+      type: 'SET_SCREENSHOT_INTERVAL',
+      params: {
+        interval_seconds: 30,
+        enabled: true,
+      },
+    })
+
+    expect(result.success).to.equal(true)
+    expect(enableStub.calledOnceWith(true)).to.equal(true)
+    expect(getConfigManager().getConfig().intervals.screenshotMs).to.equal(30000)
+  })
+
+  it('should disable scheduled screenshot capture without requiring an interval', async () => {
+    const { getCommandProcessor } = require('../../../src/main/services/command-processor')
+    const { getConfigManager } = require('../../../src/common/config')
+    const { getScreenshotService } = require('../../../src/main/services/screenshot-service')
+
+    const commandProcessor = getCommandProcessor()
+    const screenshotService = getScreenshotService()
+    const enableStub = sandbox.stub(screenshotService, 'setCaptureEnabled')
+
+    const originalInterval = getConfigManager().getConfig().intervals.screenshotMs
+    const result = await commandProcessor.handleSetScreenshotInterval({
+      id: 'cmd-disable',
+      type: 'SET_SCREENSHOT_INTERVAL',
+      params: {
+        enabled: false,
+      },
+    })
+
+    expect(result.success).to.equal(true)
+    expect(result.message).to.contain('disabled')
+    expect(enableStub.calledOnceWith(false)).to.equal(true)
+    expect(getConfigManager().getConfig().intervals.screenshotMs).to.equal(originalInterval)
+  })
 })

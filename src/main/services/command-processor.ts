@@ -210,8 +210,28 @@ export class CommandProcessor {
   }
 
   private async handleSetScreenshotInterval(command: Command): Promise<CommandResult> {
-    const rawInterval = command.params?.['interval_ms'] ?? command.params?.['intervalMs']
-    const intervalMs = typeof rawInterval === 'number' ? Math.max(10000, Math.round(rawInterval)) : undefined
+    const screenshotService = getScreenshotService()
+    const enabledParam = command.params?.['enabled']
+    const enabled = typeof enabledParam === 'boolean' ? enabledParam : true
+    screenshotService.setCaptureEnabled(enabled)
+
+    const rawIntervalSeconds = command.params?.['interval_seconds']
+    const rawIntervalMilliseconds = command.params?.['interval_ms'] ?? command.params?.['intervalMs']
+    const intervalMs =
+      typeof rawIntervalSeconds === 'number'
+        ? Math.max(10000, Math.round(rawIntervalSeconds * 1000))
+        : typeof rawIntervalMilliseconds === 'number'
+          ? Math.max(10000, Math.round(rawIntervalMilliseconds))
+          : undefined
+
+    if (!enabled) {
+      return {
+        success: true,
+        message: 'Screenshot capture disabled',
+        timestamp: new Date().toISOString(),
+      }
+    }
+
     if (!intervalMs) {
       return {
         success: false,

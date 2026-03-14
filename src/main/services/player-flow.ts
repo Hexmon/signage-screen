@@ -271,13 +271,26 @@ export class PlayerFlow extends EventEmitter {
 
   private startScreenshotLoop(): void {
     this.stopScreenshotLoop()
+    const scheduleNext = () => {
+      if (!this.runtimeLoopsStarted) {
+        return
+      }
 
-    const intervalMs = getConfigManager().getConfig().intervals.screenshotMs
-    this.screenshotInterval = setInterval(() => {
-      getScreenshotService().captureAndUpload().catch((error) => {
-        logger.warn({ error }, 'Screenshot upload failed')
-      })
-    }, intervalMs)
+      const intervalMs = getConfigManager().getConfig().intervals.screenshotMs
+      this.screenshotInterval = setTimeout(async () => {
+        try {
+          if (getScreenshotService().isCaptureEnabled()) {
+            await getScreenshotService().captureAndUpload()
+          }
+        } catch (error) {
+          logger.warn({ error }, 'Screenshot upload failed')
+        } finally {
+          scheduleNext()
+        }
+      }, intervalMs)
+    }
+
+    scheduleNext()
   }
 
   private stopScreenshotLoop(): void {

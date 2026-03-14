@@ -146,4 +146,17 @@ describe('Screenshot Service', () => {
     expect(enqueueStub.called).to.equal(false)
     expect(fs.existsSync(filepath)).to.equal(true)
   })
+
+  it('tracks whether scheduled screenshot capture is enabled', async () => {
+    const { getScreenshotService } = require('../../../src/main/services/screenshot-service')
+    const screenshotService = getScreenshotService()
+
+    expect(screenshotService.isCaptureEnabled()).to.equal(true)
+
+    screenshotService.setCaptureEnabled(false)
+    expect(screenshotService.isCaptureEnabled()).to.equal(false)
+
+    screenshotService.setCaptureEnabled(true)
+    expect(screenshotService.isCaptureEnabled()).to.equal(true)
+  })
 })

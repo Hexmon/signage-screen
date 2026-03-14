@@ -21,6 +21,7 @@ const logger = getLogger('screenshot-service')
 export class ScreenshotService {
   private mainWindow?: BrowserWindow
   private screenshotDir: string
+  private captureEnabled = true
 
   constructor() {
     const config = getConfigManager().getConfig()
@@ -34,6 +35,15 @@ export class ScreenshotService {
   initialize(mainWindow: BrowserWindow): void {
     this.mainWindow = mainWindow
     logger.info('Screenshot service initialized')
+  }
+
+  setCaptureEnabled(enabled: boolean): void {
+    this.captureEnabled = enabled
+    logger.info({ enabled }, 'Updated screenshot capture policy')
+  }
+
+  isCaptureEnabled(): boolean {
+    return this.captureEnabled
   }
 
   /**

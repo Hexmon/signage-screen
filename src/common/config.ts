@@ -87,7 +87,7 @@ export class ConfigManager {
         schedulePollMs: parseInt(process.env['HEXMON_INTERVAL_SCHEDULE_POLL_MS'] || '300000', 10),
         defaultMediaPollMs: parseInt(process.env['HEXMON_INTERVAL_DEFAULT_MEDIA_POLL_MS'] || '300000', 10),
         healthCheckMs: parseInt(process.env['HEXMON_INTERVAL_HEALTH_CHECK_MS'] || '60000', 10),
-        screenshotMs: parseInt(process.env['HEXMON_INTERVAL_SCREENSHOT_MS'] || '300000', 10),
+        screenshotMs: parseInt(process.env['HEXMON_INTERVAL_SCREENSHOT_MS'] || '30000', 10),
       },
       log: {
         level: (process.env['HEXMON_LOG_LEVEL'] as AppConfig['log']['level']) || 'info',
