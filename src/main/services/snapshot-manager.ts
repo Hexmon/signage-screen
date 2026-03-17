@@ -8,13 +8,14 @@ import * as path from 'path'
 import { pathToFileURL } from 'url'
 import { getLogger } from '../../common/logger'
 import { getConfigManager } from '../../common/config'
-import { CacheError, DeviceApiError, PlaybackMode, TimelineItem } from '../../common/types'
+import { CacheError, DeviceApiError, LayoutScene, PlaybackMode, TimelineItem } from '../../common/types'
 import { atomicWrite, ensureDir } from '../../common/utils'
 import { getHttpClient } from './network/http-client'
 import { getPairingService } from './pairing-service'
 import { getCacheManager } from './cache/cache-manager'
 import { NormalizedSnapshot, parseSnapshotResponse } from './snapshot-parser'
 import { getLifecycleEvents } from './lifecycle-events'
+import { NormalizedScheduleWindow, evaluateScheduleWindows } from './snapshot-evaluator'
 
 const logger = getLogger('snapshot-manager')
 
@@ -26,10 +27,24 @@ export interface PlaybackPlaylist {
   lastSnapshotAt?: string
 }
 
+type LayoutSlotSpec = {
+  id?: string
+  slot_id?: string
+  x?: number | string
+  y?: number | string
+  w?: number | string
+  h?: number | string
+  width?: number | string
+  height?: number | string
+  zIndex?: number
+  z_index?: number
+}
+
 export class SnapshotManager extends EventEmitter {
   private currentSnapshot?: NormalizedSnapshot
   private currentPlaylist?: PlaybackPlaylist
   private pollInterval?: NodeJS.Timeout
+  private evaluationTimer?: NodeJS.Timeout
   private isPolling = false
   private snapshotPath: string
   private lastError?: string
@@ -69,6 +84,10 @@ export class SnapshotManager extends EventEmitter {
       clearInterval(this.pollInterval)
       this.pollInterval = undefined
     }
+    if (this.evaluationTimer) {
+      clearTimeout(this.evaluationTimer)
+      this.evaluationTimer = undefined
+    }
     this.isPolling = false
   }
 
@@ -94,14 +113,30 @@ export class SnapshotManager extends EventEmitter {
 
     try {
       const httpClient = getHttpClient()
-      const response = await httpClient.get(`/api/v1/device/${deviceId}/snapshot?include_urls=true`)
+      const response = await httpClient.getResponse(`/api/v1/device/${deviceId}/snapshot?include_urls=true`, {
+        headers: this.currentSnapshot?.snapshotId
+          ? {
+              'If-None-Match': `"${this.currentSnapshot.snapshotId}"`,
+            }
+          : undefined,
+        validateStatus: (status) => (status >= 200 && status < 300) || status === 304,
+      })
 
-      if (response && typeof response === 'object' && (response as any).success === false) {
-        const message = (response as any)?.error?.message || 'Snapshot request failed'
+      if (response.status === 304 && this.currentSnapshot) {
+        logger.debug({ snapshotId: this.currentSnapshot.snapshotId }, 'Snapshot not modified, reusing cached payload')
+        const playlist = await this.buildPlaylist(this.currentSnapshot, 'normal')
+        this.currentPlaylist = playlist
+        this.lastError = undefined
+        this.emit('playlist-updated', playlist)
+        return playlist
+      }
+
+      if (response.data && typeof response.data === 'object' && (response.data as any).success === false) {
+        const message = (response.data as any)?.error?.message || 'Snapshot request failed'
         throw new Error(message)
       }
 
-      const normalized = parseSnapshotResponse(response)
+      const normalized = parseSnapshotResponse(response.data)
       await this.persistSnapshot(normalized)
 
       await this.cacheSnapshotMedia(normalized)
@@ -167,6 +202,9 @@ export class SnapshotManager extends EventEmitter {
     const allItems: TimelineItem[] = []
 
     allItems.push(...snapshot.items)
+    snapshot.scheduleWindows.forEach((window) => {
+      allItems.push(...window.items)
+    })
     if (snapshot.emergencyItem) allItems.push(snapshot.emergencyItem)
     if (snapshot.defaultItem) allItems.push(snapshot.defaultItem)
 
@@ -189,30 +227,80 @@ export class SnapshotManager extends EventEmitter {
   private async buildPlaylist(snapshot: NormalizedSnapshot, fallbackMode: PlaybackMode): Promise<PlaybackPlaylist> {
     let mode: PlaybackMode = 'normal'
     let items: TimelineItem[] = []
+    let nextTransitionAt: number | undefined
 
     if (snapshot.emergencyItem) {
       mode = 'emergency'
-      items = [snapshot.emergencyItem]
+      items = await this.attachLocalMedia([snapshot.emergencyItem])
+      nextTransitionAt =
+        snapshot.emergencyExpiresAt && Number.isFinite(Date.parse(snapshot.emergencyExpiresAt))
+          ? Date.parse(snapshot.emergencyExpiresAt)
+          : undefined
+    } else if (snapshot.scheduleWindows.length > 0) {
+      const evaluation = evaluateScheduleWindows(snapshot.scheduleWindows)
+      nextTransitionAt = evaluation.nextTransitionAt
+
+      if (evaluation.activeWindow && evaluation.items.length > 0) {
+        mode = 'normal'
+        const hydratedWindowItems = await this.attachLocalMedia(evaluation.items)
+        items = this.buildLayoutSceneItems(evaluation.activeWindow, hydratedWindowItems)
+      } else if (snapshot.defaultItem) {
+        mode = 'default'
+        items = await this.attachLocalMedia([snapshot.defaultItem])
+      } else {
+        mode = fallbackMode
+        items = []
+      }
     } else if (snapshot.items.length > 0) {
       mode = 'normal'
-      items = snapshot.items
+      items = await this.attachLocalMedia(snapshot.items)
     } else if (snapshot.defaultItem) {
       mode = 'default'
-      items = [snapshot.defaultItem]
+      items = await this.attachLocalMedia([snapshot.defaultItem])
     } else {
       mode = fallbackMode
       items = []
     }
 
-    const hydrated = await this.attachLocalMedia(items)
+    this.scheduleLocalEvaluation(snapshot, nextTransitionAt)
 
     return {
       mode,
-      items: hydrated,
+      items,
       scheduleId: snapshot.scheduleId,
       snapshotId: snapshot.snapshotId,
       lastSnapshotAt: snapshot.fetchedAt,
     }
+  }
+
+  private scheduleLocalEvaluation(snapshot: NormalizedSnapshot, nextTransitionAt?: number): void {
+    if (this.evaluationTimer) {
+      clearTimeout(this.evaluationTimer)
+      this.evaluationTimer = undefined
+    }
+
+    if (!nextTransitionAt || !Number.isFinite(nextTransitionAt)) {
+      return
+    }
+
+    const delayMs = Math.max(250, nextTransitionAt - Date.now())
+    this.evaluationTimer = setTimeout(() => {
+      void this.rebuildFromCachedSnapshot(snapshot.snapshotId)
+    }, delayMs)
+  }
+
+  private async rebuildFromCachedSnapshot(expectedSnapshotId?: string): Promise<void> {
+    if (!this.currentSnapshot) {
+      return
+    }
+
+    if (expectedSnapshotId && this.currentSnapshot.snapshotId && expectedSnapshotId !== this.currentSnapshot.snapshotId) {
+      return
+    }
+
+    const playlist = await this.buildPlaylist(this.currentSnapshot, 'offline')
+    this.currentPlaylist = playlist
+    this.emit('playlist-updated', playlist)
   }
 
   private async attachLocalMedia(items: TimelineItem[]): Promise<TimelineItem[]> {
@@ -239,6 +327,97 @@ export class SnapshotManager extends EventEmitter {
     }
 
     return hydrated
+  }
+
+  private buildLayoutSceneItems(window: NormalizedScheduleWindow, items: TimelineItem[]): TimelineItem[] {
+    const slots = this.extractLayoutSlots(window)
+    if (slots.length === 0) {
+      return items
+    }
+
+    const itemsBySlot = new Map<string, TimelineItem[]>()
+    for (const item of items) {
+      const slotId = typeof item.meta?.['slotId'] === 'string' ? String(item.meta?.['slotId']) : undefined
+      if (!slotId) {
+        return items
+      }
+      const bucket = itemsBySlot.get(slotId) || []
+      bucket.push(item)
+      itemsBySlot.set(slotId, bucket)
+    }
+
+    const sceneSlots = slots
+      .map((slot) => {
+        const slotId = slot.id || slot.slot_id
+        if (!slotId) {
+          return null
+        }
+
+        const slotItems = itemsBySlot.get(slotId) || []
+        if (slotItems.length === 0) {
+          return null
+        }
+
+        return {
+          id: slotId,
+          bounds: {
+            x: slot.x ?? 0,
+            y: slot.y ?? 0,
+            w: slot.w ?? slot.width ?? 1,
+            h: slot.h ?? slot.height ?? 1,
+            zIndex: slot.zIndex ?? slot.z_index,
+          },
+          items: slotItems,
+        }
+      })
+      .filter(Boolean) as LayoutScene['slots']
+
+    if (sceneSlots.length === 0) {
+      return items
+    }
+
+    const nowMs = Date.now()
+    const endAtMs = window.endAt ? Date.parse(window.endAt) : Number.NaN
+    const remainingMs = Number.isFinite(endAtMs) ? Math.max(1000, endAtMs - nowMs) : 10000
+    const primaryMediaId = sceneSlots[0]?.items[0]?.mediaId
+
+    const scene: LayoutScene = {
+      layoutId: window.layout?.id,
+      layoutName: window.layout?.name,
+      aspectRatio: window.layout?.aspect_ratio,
+      startsAt: window.startAt,
+      endsAt: window.endAt,
+      slots: sceneSlots,
+    }
+
+    return [
+      {
+        id: `scene:${window.id}`,
+        type: 'scene',
+        mediaId: primaryMediaId,
+        displayMs: remainingMs,
+        fit: 'contain',
+        muted: true,
+        transitionDurationMs: 0,
+        meta: {
+          source: 'schedule',
+          presentationId: window.presentationId,
+          presentationName: window.presentationName,
+          layout: window.layout,
+          scene,
+        },
+      },
+    ]
+  }
+
+  private extractLayoutSlots(window: NormalizedScheduleWindow): LayoutSlotSpec[] {
+    const spec = window.layout?.spec
+    if (!spec || typeof spec !== 'object') {
+      return []
+    }
+
+    const slots = (spec as { slots?: unknown[] }).slots
+    return Array.isArray(slots) ? (slots as LayoutSlotSpec[]) : []
   }
 
   private async applyOfflineFallback(reason?: string): Promise<PlaybackPlaylist> {

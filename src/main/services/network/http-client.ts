@@ -101,6 +101,15 @@ export class HttpClient {
     )
   }
 
+  async getResponse<T = unknown>(url: string, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> {
+    return await this.executeWithRetry(
+      async () => await this.client.get<T>(url, config),
+      url,
+      'GET',
+      config
+    )
+  }
+
   async post<T = unknown>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> {
     return await this.executeWithRetry(
       async () => {

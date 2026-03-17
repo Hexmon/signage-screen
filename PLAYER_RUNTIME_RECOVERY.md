@@ -6,6 +6,7 @@
 - Runtime is considered valid only after:
   1. authenticated snapshot succeeds
   2. authenticated heartbeat succeeds
+- Legacy `/v1/device/:deviceId/schedule` and `/v1/device/:deviceId/emergency` polling is not the production contract and must not define runtime behavior.
 
 ## Recovery classification
 - Transient infra failure -> `SOFT_RECOVERY`
@@ -18,6 +19,10 @@
 - If cached playable content exists, keep it visible during bootstrap and transient backend failures.
 - Do not black-screen on temporary backend/network issues.
 - Replace cached playback once a fresh authenticated snapshot is available.
+- The device snapshot endpoint is the only authoritative runtime content contract.
+- Snapshot payloads are evaluated locally against UTC `start_at` / `end_at` schedule windows.
+- The player re-evaluates cached schedule windows at local time boundaries without requiring a fresh snapshot fetch.
+- Slot-based presentations with `layout.spec.slots` are rendered as a local timed scene so each slot can keep cycling cached media until the schedule window ends.
 - Resolved default media is cached locally for the paired device and is reused during `offline` and `empty` fallback modes when available.
 - Default media rendering uses `contain` and reuses the same aspect-ratio-specific fallback across different resolutions of the same aspect ratio.
 

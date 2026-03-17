@@ -3,7 +3,7 @@
  * Handles media rendering and transitions in the renderer process
  */
 
-import { DefaultMediaResponse, FitMode, PlayerStatus, TimelineItem } from '../common/types'
+import { DefaultMediaResponse, FitMode, LayoutScene, LayoutSceneSlot, PlayerStatus, TimelineItem } from '../common/types'
 import './types'
 import { DefaultMediaPlayer } from './default-media-player'
 import { checkMediaCompatibility, CompatResult } from '../common/media-compat'
@@ -22,6 +22,7 @@ class Player {
   private statusMediaId: HTMLElement | null = null
   private statusSnapshot: HTMLElement | null = null
   private modeBanner: HTMLElement | null = null
+  private currentCleanup?: () => void
 
   constructor() {
     this.initializeElements()
@@ -197,6 +198,18 @@ class Player {
     this.log('info', 'Playing media', { itemId: item.id, type: item.type })
 
     try {
+      if (item.type === 'scene') {
+        const scene = this.getSceneDefinition(item)
+        if (!scene) {
+          throw new Error('Scene definition missing from scheduled layout item')
+        }
+
+        const element = this.renderScene(item, scene)
+        this.showElement(element)
+        this.currentElement = element
+        return
+      }
+
       const sourceContentType =
         typeof item.meta?.['source_content_type'] === 'string' ? (item.meta?.['source_content_type'] as string) : undefined
       const mediaName = typeof item.meta?.['name'] === 'string' ? (item.meta?.['name'] as string) : undefined
@@ -345,6 +358,37 @@ class Player {
     return webview
   }
 
+  private renderScene(sceneItem: TimelineItem, scene: LayoutScene): HTMLElement {
+    const container = document.createElement('div')
+    container.style.position = 'absolute'
+    container.style.top = '0'
+    container.style.left = '0'
+    container.style.width = '100%'
+    container.style.height = '100%'
+    container.style.backgroundColor = '#000'
+    container.dataset['sceneId'] = sceneItem.id
+
+    const cleanupCallbacks: Array<() => void> = []
+
+    scene.slots.forEach((slot) => {
+      const slotContainer = document.createElement('div')
+      slotContainer.style.position = 'absolute'
+      slotContainer.style.overflow = 'hidden'
+      slotContainer.style.backgroundColor = '#000'
+      this.applySlotBounds(slotContainer, slot)
+
+      container.appendChild(slotContainer)
+      cleanupCallbacks.push(this.mountSceneSlot(slotContainer, slot, scene.startsAt))
+    })
+
+    this.currentCleanup = () => {
+      cleanupCallbacks.forEach((cleanup) => cleanup())
+      cleanupCallbacks.length = 0
+    }
+
+    return container
+  }
+
   /**
    * Get media source (from cache or URL)
    */
@@ -388,12 +432,20 @@ class Player {
   private showElement(element: HTMLElement): void {
     if (!this.mediaContainer) return
 
+    this.runCurrentCleanup()
+
     // Hide current element
     if (this.currentElement) {
+      const previous = this.currentElement
       this.currentElement.style.opacity = '0'
       setTimeout(() => {
-        if (this.currentElement && this.mediaContainer) {
-          this.mediaContainer.removeChild(this.currentElement)
+        if (this.mediaContainer && previous.parentElement === this.mediaContainer) {
+          if (previous instanceof HTMLVideoElement) {
+            previous.pause()
+            previous.removeAttribute('src')
+            previous.load()
+          }
+          this.mediaContainer.removeChild(previous)
         }
       }, 500)
     }
@@ -537,6 +589,184 @@ class Player {
     } else {
       console.log(`[${level}] ${message}`, data)
     }
+  }
+
+  private getSceneDefinition(item: TimelineItem): LayoutScene | null {
+    const scene = item.meta?.['scene']
+    if (!scene || typeof scene !== 'object') {
+      return null
+    }
+
+    return scene as LayoutScene
+  }
+
+  private applySlotBounds(element: HTMLElement, slot: LayoutSceneSlot): void {
+    const width = this.normalizeDimension(slot.bounds.w)
+    const height = this.normalizeDimension(slot.bounds.h)
+    const left = this.normalizeDimension(slot.bounds.x)
+    const top = this.normalizeDimension(slot.bounds.y)
+
+    element.style.left = left
+    element.style.top = top
+    element.style.width = width
+    element.style.height = height
+
+    if (typeof slot.bounds.zIndex === 'number') {
+      element.style.zIndex = String(slot.bounds.zIndex)
+    }
+  }
+
+  private normalizeDimension(value: number | string | undefined): string {
+    if (typeof value === 'number') {
+      return value > 1 ? `${value}px` : `${value * 100}%`
+    }
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim()
+      if (trimmed.endsWith('%') || trimmed.endsWith('px')) {
+        return trimmed
+      }
+
+      const numeric = Number(trimmed)
+      if (Number.isFinite(numeric)) {
+        return numeric > 1 ? `${numeric}px` : `${numeric * 100}%`
+      }
+    }
+
+    return '0%'
+  }
+
+  private mountSceneSlot(container: HTMLElement, slot: LayoutSceneSlot, sceneStartsAt?: string): () => void {
+    const timers = new Set<number>()
+    let disposed = false
+    let activeElement: HTMLElement | undefined
+
+    const totalDurationMs = slot.items.reduce((sum, item) => sum + Math.max(1, item.displayMs), 0)
+    const elapsedSinceSceneStart = sceneStartsAt ? Math.max(0, Date.now() - Date.parse(sceneStartsAt)) : 0
+    const cycleOffset = totalDurationMs > 0 ? elapsedSinceSceneStart % totalDurationMs : 0
+
+    const resolveInitialPosition = (): { index: number; remainingMs: number } => {
+      if (slot.items.length === 0) {
+        return { index: 0, remainingMs: 1000 }
+      }
+
+      if (totalDurationMs <= 0) {
+        return { index: 0, remainingMs: slot.items[0]?.displayMs || 1000 }
+      }
+
+      let consumed = 0
+      for (let index = 0; index < slot.items.length; index += 1) {
+        const item = slot.items[index]
+        if (!item) continue
+        const duration = Math.max(1, item.displayMs)
+        if (cycleOffset < consumed + duration) {
+          return {
+            index,
+            remainingMs: Math.max(250, consumed + duration - cycleOffset),
+          }
+        }
+        consumed += duration
+      }
+
+      return { index: 0, remainingMs: Math.max(250, slot.items[0]?.displayMs || 1000) }
+    }
+
+    const renderIntoSlot = async (item: TimelineItem): Promise<HTMLElement> => {
+      switch (item.type) {
+        case 'image':
+          return await this.renderImage(item)
+        case 'video':
+          return await this.renderVideo(item)
+        case 'pdf':
+          return await this.renderPDF(item)
+        case 'url':
+          return await this.renderURL(item)
+        default:
+          throw new Error(`Unsupported scene media type: ${item.type}`)
+      }
+    }
+
+    const showSlotItem = async (index: number, delayOverrideMs?: number): Promise<void> => {
+      if (disposed || slot.items.length === 0) {
+        return
+      }
+
+      const normalizedIndex = index % slot.items.length
+      const item = slot.items[normalizedIndex]
+      if (!item) {
+        return
+      }
+
+      try {
+        const nextElement = await renderIntoSlot(item)
+        this.applyFitMode(nextElement, item.fit)
+        nextElement.style.opacity = '0'
+        nextElement.style.transition = 'opacity 300ms ease-in-out'
+        container.appendChild(nextElement)
+
+        requestAnimationFrame(() => {
+          nextElement.style.opacity = '1'
+        })
+
+        if (activeElement && activeElement.parentElement === container) {
+          const previous = activeElement
+          previous.style.opacity = '0'
+          window.setTimeout(() => {
+            if (previous.parentElement === container) {
+              if (previous instanceof HTMLVideoElement) {
+                previous.pause()
+                previous.removeAttribute('src')
+                previous.load()
+              }
+              container.removeChild(previous)
+            }
+          }, 300)
+        }
+
+        activeElement = nextElement
+        const delayMs = delayOverrideMs ?? Math.max(250, item.displayMs)
+        const timer = window.setTimeout(() => {
+          timers.delete(timer)
+          void showSlotItem(normalizedIndex + 1)
+        }, delayMs)
+        timers.add(timer)
+      } catch (error) {
+        this.log('error', 'Failed to render scene slot media', {
+          slotId: slot.id,
+          itemId: item.id,
+          error: (error as Error).message,
+        })
+      }
+    }
+
+    const initialPosition = resolveInitialPosition()
+    void showSlotItem(initialPosition.index, initialPosition.remainingMs)
+
+    return () => {
+      disposed = true
+      timers.forEach((timer) => window.clearTimeout(timer))
+      timers.clear()
+
+      if (activeElement instanceof HTMLVideoElement) {
+        activeElement.pause()
+        activeElement.removeAttribute('src')
+        activeElement.load()
+      }
+
+      while (container.firstChild) {
+        container.removeChild(container.firstChild)
+      }
+    }
+  }
+
+  private runCurrentCleanup(): void {
+    if (!this.currentCleanup) {
+      return
+    }
+
+    const cleanup = this.currentCleanup
+    this.currentCleanup = undefined
+    cleanup()
   }
 }
 

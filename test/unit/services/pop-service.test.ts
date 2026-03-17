@@ -12,6 +12,7 @@ describe('Proof-of-Play Service', () => {
   let tempDir: string
   let spoolDir: string
   let sandbox: sinon.SinonSandbox
+  let clock: sinon.SinonFakeTimers | undefined
 
   beforeEach(() => {
     sandbox = sinon.createSandbox()
@@ -41,6 +42,8 @@ describe('Proof-of-Play Service', () => {
   })
 
   afterEach(() => {
+    clock?.restore()
+    clock = undefined
     sandbox.restore()
     cleanupTempDir(tempDir)
     delete process.env.HEXMON_CONFIG_PATH
@@ -107,10 +110,9 @@ describe('Proof-of-Play Service', () => {
 
   describe('Deduplication', () => {
     it('should deduplicate events', () => {
+      clock = sandbox.useFakeTimers({ now: new Date('2026-03-14T14:00:00.000Z'), shouldAdvanceTime: false })
       const { getProofOfPlayService } = require('../../../src/main/services/pop-service')
       const popService = getProofOfPlayService()
-
-      const timestamp = new Date().toISOString()
 
       // Record same event twice
       popService.recordStart('schedule-1', 'media-1')

@@ -72,8 +72,31 @@ export interface SecurityConfig {
 // Media & Content Types
 // ============================================================================
 
-export type MediaType = 'image' | 'video' | 'pdf' | 'url' | 'office'
+export type MediaType = 'image' | 'video' | 'pdf' | 'url' | 'office' | 'scene'
 export type FitMode = 'contain' | 'cover' | 'stretch'
+
+export interface LayoutSceneSlotBounds {
+  x: number | string
+  y: number | string
+  w: number | string
+  h: number | string
+  zIndex?: number
+}
+
+export interface LayoutSceneSlot {
+  id: string
+  bounds: LayoutSceneSlotBounds
+  items: TimelineItem[]
+}
+
+export interface LayoutScene {
+  layoutId?: string
+  layoutName?: string
+  aspectRatio?: string
+  startsAt?: string
+  endsAt?: string
+  slots: LayoutSceneSlot[]
+}
 
 // CMS default media types
 export type DefaultMediaType = 'IMAGE' | 'VIDEO' | 'DOCUMENT'
@@ -167,6 +190,12 @@ export interface EmergencyOverride {
 // Snapshot payload (device API)
 export interface SnapshotScheduleItem {
   id?: string
+  presentation_id?: string
+  start_at?: string
+  end_at?: string
+  priority?: number
+  screen_ids?: string[]
+  screen_group_ids?: string[]
   media_id?: string
   mediaId?: string
   type?: MediaType
@@ -184,12 +213,63 @@ export interface SnapshotScheduleItem {
   media_url?: string
   url?: string
   sha256?: string
+  presentation?: SnapshotPresentation | null
 }
 
 export interface SnapshotSchedule {
   id?: string
   version?: number
+  timezone?: string | null
+  start_at?: string
+  end_at?: string
   items?: SnapshotScheduleItem[]
+}
+
+export interface SnapshotLayout {
+  id?: string
+  name?: string
+  description?: string | null
+  aspect_ratio?: string
+  spec?: Record<string, unknown> | { slots?: unknown[] }
+}
+
+export interface SnapshotPresentationMedia {
+  id?: string
+  name?: string
+  type?: string
+  status?: string
+  source_bucket?: string
+  source_object_key?: string
+  ready_object_id?: string | null
+  thumbnail_object_id?: string | null
+}
+
+export interface SnapshotPresentationItem {
+  id?: string
+  media_id?: string
+  order?: number
+  duration_seconds?: number
+  media?: SnapshotPresentationMedia | null
+}
+
+export interface SnapshotPresentationSlotItem {
+  id?: string
+  slot_id?: string
+  media_id?: string
+  order?: number
+  duration_seconds?: number
+  fit_mode?: FitMode | string
+  audio_enabled?: boolean
+  media?: SnapshotPresentationMedia | null
+}
+
+export interface SnapshotPresentation {
+  id?: string
+  name?: string
+  description?: string | null
+  layout?: SnapshotLayout | null
+  items?: SnapshotPresentationItem[]
+  slots?: SnapshotPresentationSlotItem[]
 }
 
 export interface SnapshotMediaUrlMap {
@@ -217,6 +297,7 @@ export interface DeviceSnapshot {
   media?: SnapshotMediaEntry[]
   emergency?: {
     active?: boolean
+    expires_at?: string | null
     media_id?: string
     mediaId?: string
     media_url?: string
