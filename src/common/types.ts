@@ -6,16 +6,23 @@
 // Configuration Types
 // ============================================================================
 
+export type RuntimeMode = 'dev' | 'qa' | 'production'
+
 export interface AppConfig {
   apiBase: string
   wsUrl: string
   deviceId: string
+  runtime: RuntimeConfig
   mtls: MTLSConfig
   cache: CacheConfig
   intervals: IntervalsConfig
   log: LogConfig
   power: PowerConfig
   security: SecurityConfig
+}
+
+export interface RuntimeConfig {
+  mode: RuntimeMode
 }
 
 export interface MTLSConfig {

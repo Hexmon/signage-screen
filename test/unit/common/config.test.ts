@@ -11,8 +11,14 @@ const { createTempDir, cleanupTempDir } = require('../../helpers/test-utils.ts')
 describe('Config Manager', () => {
   let tempDir: string
   let configPath: string
+  let originalNodeEnv: string | undefined
+  let originalRuntimeMode: string | undefined
+  let originalConfigPath: string | undefined
 
   beforeEach(() => {
+    originalNodeEnv = process.env.NODE_ENV
+    originalRuntimeMode = process.env.HEXMON_RUNTIME_MODE
+    originalConfigPath = process.env.HEXMON_CONFIG_PATH
     tempDir = createTempDir('config-test-')
     configPath = path.join(tempDir, 'config.json')
 
@@ -21,6 +27,9 @@ describe('Config Manager', () => {
       apiBase: 'https://api-test.hexmon.com',
       wsUrl: 'wss://api-test.hexmon.com/ws',
       deviceId: 'test-device',
+      runtime: {
+        mode: 'qa',
+      },
       cache: {
         path: path.join(tempDir, 'cache'),
         maxBytes: 1073741824,
@@ -40,7 +49,21 @@ describe('Config Manager', () => {
 
   afterEach(() => {
     cleanupTempDir(tempDir)
-    delete process.env.HEXMON_CONFIG_PATH
+    if (originalConfigPath === undefined) {
+      delete process.env.HEXMON_CONFIG_PATH
+    } else {
+      process.env.HEXMON_CONFIG_PATH = originalConfigPath
+    }
+    if (originalRuntimeMode === undefined) {
+      delete process.env.HEXMON_RUNTIME_MODE
+    } else {
+      process.env.HEXMON_RUNTIME_MODE = originalRuntimeMode
+    }
+    if (originalNodeEnv === undefined) {
+      delete process.env.NODE_ENV
+    } else {
+      process.env.NODE_ENV = originalNodeEnv
+    }
     sinon.restore()
   })
 
@@ -55,6 +78,7 @@ describe('Config Manager', () => {
 
       expect(config.apiBase).to.equal('https://api-test.hexmon.com')
       expect(config.deviceId).to.equal('test-device')
+      expect(config.runtime.mode).to.equal('qa')
     })
 
     it('should validate required fields', () => {
@@ -85,6 +109,7 @@ describe('Config Manager', () => {
 
       expect(config.log.level).to.exist
       expect(config.intervals).to.exist
+      expect(config.runtime.mode).to.exist
     })
   })
 
@@ -128,6 +153,21 @@ describe('Config Manager', () => {
 
       expect(validation.valid).to.be.false
     })
+
+    it('should reject invalid runtime modes', () => {
+      const invalidConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+      invalidConfig.runtime = { mode: 'staging' }
+      fs.writeFileSync(configPath, JSON.stringify(invalidConfig, null, 2))
+
+      delete require.cache[require.resolve('../../../src/common/config')]
+      const { getConfigManager } = require('../../../src/common/config')
+
+      const configManager = getConfigManager()
+      const validation = configManager.validateConfig()
+
+      expect(validation.valid).to.be.false
+      expect(validation.errors).to.include('runtime.mode must be one of: dev, qa, production')
+    })
   })
 
   describe('Environment Variable Overrides', () => {
@@ -147,6 +187,50 @@ describe('Config Manager', () => {
       expect(config.deviceId).to.equal('override-device')
 
       delete process.env.HEXMON_DEVICE_ID
+    })
+
+    it('should default to dev runtime mode in development', () => {
+      const updatedConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+      delete updatedConfig.runtime
+      fs.writeFileSync(configPath, JSON.stringify(updatedConfig, null, 2))
+
+      process.env.NODE_ENV = 'development'
+
+      delete require.cache[require.resolve('../../../src/common/config')]
+      const { getConfigManager } = require('../../../src/common/config')
+
+      const configManager = getConfigManager()
+      const config = configManager.getConfig()
+
+      expect(config.runtime.mode).to.equal('dev')
+    })
+
+    it('should honor HEXMON_RUNTIME_MODE when valid', () => {
+      const updatedConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+      delete updatedConfig.runtime
+      fs.writeFileSync(configPath, JSON.stringify(updatedConfig, null, 2))
+
+      process.env.HEXMON_RUNTIME_MODE = 'production'
+
+      delete require.cache[require.resolve('../../../src/common/config')]
+      const { getConfigManager } = require('../../../src/common/config')
+
+      const configManager = getConfigManager()
+      const config = configManager.getConfig()
+
+      expect(config.runtime.mode).to.equal('production')
+    })
+
+    it('should let HEXMON_RUNTIME_MODE override the config file', () => {
+      process.env.HEXMON_RUNTIME_MODE = 'production'
+
+      delete require.cache[require.resolve('../../../src/common/config')]
+      const { getConfigManager } = require('../../../src/common/config')
+
+      const configManager = getConfigManager()
+      const config = configManager.getConfig()
+
+      expect(config.runtime.mode).to.equal('production')
     })
   })
 

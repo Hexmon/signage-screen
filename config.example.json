@@ -2,6 +2,9 @@
   "apiBase": "http://192.168.0.4:3000",
   "wsUrl": "ws://192.168.0.4:3000/ws",
   "deviceId": "",
+  "runtime": {
+    "mode": "production"
+  },
   "mtls": {
     "enabled": false,
     "certPath": "/var/lib/hexmon/certs/client.crt",

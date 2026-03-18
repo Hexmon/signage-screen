@@ -35,6 +35,9 @@ Edit `config.json` with your settings:
   "apiBase": "https://your-api-server.com",
   "wsUrl": "wss://your-api-server.com/ws",
   "deviceId": "",
+  "runtime": {
+    "mode": "dev"
+  },
   "mtls": {
     "enabled": false
   }
@@ -42,6 +45,7 @@ Edit `config.json` with your settings:
 ```
 
 For initial testing, you can disable mTLS by setting `"enabled": false`.
+`runtime.mode` only supports `dev`, `qa`, and `production`.
 
 ### 3. Build the Application
 
@@ -55,7 +59,7 @@ npm run build
 npm run start:dev
 ```
 
-The application should launch in fullscreen kiosk mode.
+The application should launch in a normal window in `dev` mode. Use `qa` or `production` when you want fullscreen kiosk behavior with keyboard and mouse input disabled.
 
 ## Development Workflow
 
@@ -400,4 +404,3 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for contribution guidelines.
 ## License
 
 Apache-2.0
-

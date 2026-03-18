@@ -15,6 +15,7 @@ import { getConfigManager } from '../common/config'
 import { getLogger } from '../common/logger'
 import { ExponentialBackoff } from '../common/utils'
 import type { AppConfig } from '../common/types'
+import { getRuntimeMode, getRuntimeWindowPolicy } from './runtime-mode'
 
 console.log('Initializing logger...')
 const logger = getLogger('main')
@@ -84,22 +85,61 @@ function applyConfigToNetworkClients(nextConfig: AppConfig): void {
 // Disable hardware acceleration if needed for stability
 // app.disableHardwareAcceleration()
 
+function applyRuntimeInteractionPolicy(window: BrowserWindow, appConfig: AppConfig): void {
+  const mode = getRuntimeMode(appConfig)
+  const policy = getRuntimeWindowPolicy(mode)
+
+  if (policy.disableInput) {
+    window.setMenuBarVisibility(false)
+    window.removeMenu()
+    window.webContents.setIgnoreMenuShortcuts(true)
+    window.webContents.on('before-input-event', (event) => {
+      event.preventDefault()
+    })
+  }
+
+  const shouldHideCursor = policy.hideCursor || process.env['HEXMON_HIDE_CURSOR'] === 'true'
+  if (shouldHideCursor) {
+    const pointerRules = policy.disableInput ? 'pointer-events: none !important;' : ''
+    window.webContents
+      .insertCSS(`
+        * {
+          cursor: none !important;
+          ${pointerRules}
+        }
+      `)
+      .catch((error) => {
+        logger.error({ error, mode }, 'Failed to apply runtime interaction policy')
+      })
+  }
+}
+
 /**
- * Create the main browser window with kiosk settings
+ * Create the main browser window using the configured runtime mode.
  */
 function createWindow(): void {
   const appConfig = config.getConfig()
+  const mode = getRuntimeMode(appConfig)
+  const windowPolicy = getRuntimeWindowPolicy(mode)
   const primaryDisplay = screen.getPrimaryDisplay()
   const { width, height } = primaryDisplay.workAreaSize
+  const windowWidth = windowPolicy.kiosk ? width : Math.min(width, 1440)
+  const windowHeight = windowPolicy.kiosk ? height : Math.min(height, 900)
 
-  logger.info({ width, height }, 'Creating main window')
+  logger.info({ width: windowWidth, height: windowHeight, mode, kiosk: windowPolicy.kiosk }, 'Creating main window')
 
   mainWindow = new BrowserWindow({
-    width,
-    height,
-    fullscreen: true,
-    kiosk: true,
-    frame: false,
+    width: windowWidth,
+    height: windowHeight,
+    center: true,
+    fullscreen: windowPolicy.fullscreen,
+    kiosk: windowPolicy.kiosk,
+    frame: windowPolicy.frame,
+    movable: windowPolicy.movable,
+    resizable: windowPolicy.resizable,
+    minimizable: windowPolicy.minimizable,
+    maximizable: windowPolicy.maximizable,
+    closable: windowPolicy.closable,
     show: false,
     backgroundColor: '#000000',
     webPreferences: {
@@ -186,12 +226,7 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
-  // Hide cursor if configured
-  if (process.env['HEXMON_HIDE_CURSOR'] === 'true') {
-    mainWindow.webContents.insertCSS('* { cursor: none !important; }').catch((error) => {
-      logger.error({ error }, 'Failed to hide cursor')
-    })
-  }
+  applyRuntimeInteractionPolicy(mainWindow, appConfig)
 }
 
 /**
@@ -412,7 +447,7 @@ function setupIPCHandlers(): void {
       wsState: 'disconnected',
       lastSync: playlist?.lastSnapshotAt,
       commandQueueSize: requestQueue.getSize(),
-      screenMode: 'fullscreen',
+      screenMode: config.getConfig().runtime.mode,
       uptime: process.uptime(),
       version: app.getVersion(),
       dnsResolution: diagnostics.dnsResolution,
@@ -488,7 +523,7 @@ app.on('ready', async () => {
 
 app.on('window-all-closed', () => {
   // On Linux, keep the app running even if all windows are closed
-  // This is important for kiosk mode
+  // This is important for unattended signage runtime
   logger.info('All windows closed, but keeping app running')
 })
 

@@ -6,8 +6,10 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { EventEmitter } from 'events'
-import type { AppConfig } from './types'
+import type { AppConfig, RuntimeMode } from './types'
 import type { App as ElectronApp } from 'electron'
+
+const RUNTIME_MODES: RuntimeMode[] = ['dev', 'qa', 'production']
 
 export class ConfigManager {
   private config: AppConfig
@@ -52,6 +54,7 @@ export class ConfigManager {
     const homeDir = os.homedir() || os.tmpdir()
     const apiBase = this.buildDefaultApiBase()
     const wsUrl = this.buildDefaultWsUrl(apiBase)
+    const runtimeMode = this.buildDefaultRuntimeMode()
 
     const defaultCachePath =
       process.env['HEXMON_CACHE_PATH'] || (isDevelopment ? path.join(homeDir, '.hexmon', 'cache') : '/var/cache/hexmon')
@@ -67,6 +70,9 @@ export class ConfigManager {
       apiBase,
       wsUrl,
       deviceId: process.env['HEXMON_DEVICE_ID'] || '',
+      runtime: {
+        mode: runtimeMode,
+      },
       mtls: {
         enabled: process.env['HEXMON_MTLS_ENABLED'] === 'true',
         certPath: defaultCertPath,
@@ -112,6 +118,19 @@ export class ConfigManager {
         sandbox: process.env['HEXMON_SECURITY_SANDBOX'] !== 'false',
       },
     }
+  }
+
+  private buildDefaultRuntimeMode(): RuntimeMode {
+    const requestedMode = (process.env['HEXMON_RUNTIME_MODE'] || '').trim().toLowerCase()
+    if (this.isRuntimeMode(requestedMode)) {
+      return requestedMode
+    }
+
+    return process.env['NODE_ENV'] === 'development' ? 'dev' : 'production'
+  }
+
+  private isRuntimeMode(value: string): value is RuntimeMode {
+    return RUNTIME_MODES.includes(value as RuntimeMode)
   }
 
   private allowLocalhostFallback(): boolean {
@@ -162,6 +181,7 @@ export class ConfigManager {
       apiBase: overrides.apiBase ?? defaults.apiBase,
       wsUrl: overrides.wsUrl ?? defaults.wsUrl,
       deviceId: overrides.deviceId ?? defaults.deviceId,
+      runtime: { ...defaults.runtime, ...overrides.runtime },
       mtls: { ...defaults.mtls, ...overrides.mtls },
       cache: { ...defaults.cache, ...overrides.cache },
       intervals: { ...defaults.intervals, ...overrides.intervals },
@@ -174,12 +194,26 @@ export class ConfigManager {
   private normalizeConfig(config: AppConfig): AppConfig {
     const apiBase = this.normalizeUrl(config.apiBase) || this.buildDefaultApiBase()
     const wsUrl = this.normalizeUrl(config.wsUrl) || this.buildDefaultWsUrl(apiBase)
+    const runtimeMode = this.getRuntimeModeOverride() || config.runtime.mode
 
     return {
       ...config,
       apiBase,
       wsUrl,
+      runtime: {
+        ...config.runtime,
+        mode: runtimeMode,
+      },
     }
+  }
+
+  private getRuntimeModeOverride(): RuntimeMode | undefined {
+    const requestedMode = (process.env['HEXMON_RUNTIME_MODE'] || '').trim().toLowerCase()
+    if (this.isRuntimeMode(requestedMode)) {
+      return requestedMode
+    }
+
+    return undefined
   }
 
   private deriveWsUrl(apiBase: string): string | null {
@@ -203,6 +237,7 @@ export class ConfigManager {
   private cloneConfig(config: AppConfig): AppConfig {
     return {
       ...config,
+      runtime: { ...config.runtime },
       mtls: { ...config.mtls },
       cache: { ...config.cache },
       intervals: { ...config.intervals },
@@ -280,6 +315,10 @@ export class ConfigManager {
       new URL(this.config.wsUrl)
     } catch {
       errors.push('wsUrl must be a valid URL')
+    }
+
+    if (!this.isRuntimeMode(this.config.runtime.mode)) {
+      errors.push(`runtime.mode must be one of: ${RUNTIME_MODES.join(', ')}`)
     }
 
     if (this.config.cache.maxBytes < 1024 * 1024 * 100) {

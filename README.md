@@ -98,6 +98,9 @@ Configuration is loaded from (in order of precedence):
   "apiBase": "https://api.hexmon.local",
   "wsUrl": "wss://api.hexmon.local/ws",
   "deviceId": "",
+  "runtime": {
+    "mode": "production"
+  },
   "mtls": {
     "enabled": true,
     "certPath": "/var/lib/hexmon/certs/client.crt",
@@ -143,6 +146,12 @@ Configuration is loaded from (in order of precedence):
 }
 ```
 
+`runtime.mode` only supports `dev`, `qa`, and `production`.
+
+- `dev`: windowed app, no kiosk lock, keyboard and mouse remain available
+- `qa`: fullscreen kiosk with mouse and keyboard input blocked
+- `production`: fullscreen kiosk with mouse and keyboard input blocked
+
 ### Environment Variables
 
 All configuration options can be set via environment variables with the `HEXMON_` prefix:
@@ -151,6 +160,7 @@ All configuration options can be set via environment variables with the `HEXMON_
 export HEXMON_API_BASE="https://api.hexmon.local"
 export HEXMON_WS_URL="wss://api.hexmon.local/ws"
 export HEXMON_DEVICE_ID="device-12345"
+export HEXMON_RUNTIME_MODE="qa"
 export HEXMON_MTLS_ENABLED="true"
 export HEXMON_CACHE_MAX_BYTES="10737418240"
 export HEXMON_LOG_LEVEL="debug"
@@ -199,6 +209,8 @@ hexmon-signage-player
 # Development mode
 npm run start:dev
 ```
+
+`npm run start:dev` defaults the player to `runtime.mode=dev` unless a config file explicitly overrides it.
 
 ### Health Check
 
@@ -344,4 +356,3 @@ Apache-2.0
 ## Support
 
 For support, please contact support@hexmon.com or visit https://docs.hexmon.com
-
