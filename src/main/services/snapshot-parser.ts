@@ -117,23 +117,48 @@ function extractMediaUrlMap(payload: DeviceSnapshot): SnapshotMediaUrlMap {
 }
 
 export function parseSnapshotResponse(raw: unknown): NormalizedSnapshot {
-  const payload = (raw as any)?.snapshot || (raw as any)?.data || raw
+  const wrapper = raw as any
+  const payload = wrapper?.snapshot || wrapper?.data || raw
 
   if (!payload || typeof payload !== 'object') {
     throw new Error('Snapshot payload is not an object')
   }
 
   const snapshot = payload as DeviceSnapshot
-  const mediaUrlMap = extractMediaUrlMap(snapshot)
+  const rootDefaultMedia =
+    wrapper?.snapshot && typeof wrapper === 'object' ? wrapper.default_media ?? snapshot.default_media : snapshot.default_media
+  const rootEmergency =
+    wrapper?.snapshot && typeof wrapper === 'object' ? wrapper.emergency ?? snapshot.emergency : snapshot.emergency
+  const mediaCarrier =
+    wrapper?.snapshot && typeof wrapper === 'object'
+      ? {
+          ...snapshot,
+          media_urls: wrapper.media_urls ?? snapshot.media_urls,
+          mediaUrls: wrapper.mediaUrls ?? snapshot.mediaUrls,
+          media: wrapper.media ?? snapshot.media,
+          default_media: rootDefaultMedia,
+          emergency: rootEmergency,
+        }
+      : snapshot
+  const mediaUrlMap = extractMediaUrlMap(mediaCarrier as DeviceSnapshot)
 
   const schedule = snapshot.schedule
-  const itemsSource = Array.isArray(schedule?.items) ? schedule?.items : snapshot.items
+  const scheduleItems = Array.isArray(schedule?.items) ? schedule.items : []
+  const hasTimedWindowPayload = scheduleItems.some((item) => {
+    if (!item || typeof item !== 'object') {
+      return false
+    }
+
+    return Boolean(item.presentation || item.presentation_id || item.start_at || item.end_at)
+  })
+
+  const itemsSource = hasTimedWindowPayload ? snapshot.items : scheduleItems.length > 0 ? scheduleItems : snapshot.items
   const items = (itemsSource || [])
     .map((item) => normalizeItem(item, mediaUrlMap))
     .filter(Boolean) as TimelineItem[]
-  const scheduleWindows = normalizeScheduleWindows(Array.isArray(schedule?.items) ? schedule.items : [], mediaUrlMap)
+  const scheduleWindows = normalizeScheduleWindows(scheduleItems, mediaUrlMap)
 
-  const emergencyInput = snapshot.emergency
+  const emergencyInput = rootEmergency
   const emergencyExpired =
     typeof emergencyInput?.expires_at === 'string' && Number.isFinite(Date.parse(emergencyInput.expires_at))
       ? Date.parse(emergencyInput.expires_at) <= Date.now()
@@ -144,7 +169,7 @@ export function parseSnapshotResponse(raw: unknown): NormalizedSnapshot {
     (emergencyInput.active === true || Boolean(emergencyInput.media_url || emergencyInput.url))
   const emergencyItem = emergencyActive ? normalizeItem(emergencyInput, mediaUrlMap) || undefined : undefined
 
-  const defaultInput = snapshot.default_media
+  const defaultInput = rootDefaultMedia
   const defaultItem = defaultInput ? normalizeItem(defaultInput, mediaUrlMap) || undefined : undefined
 
   const normalized: NormalizedSnapshot = {

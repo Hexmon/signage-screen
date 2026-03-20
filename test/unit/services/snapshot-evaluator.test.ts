@@ -43,6 +43,64 @@ describe('Snapshot Evaluator', () => {
     expect(windows[0].items[0].remoteUrl).to.equal('https://cdn.example.com/loop.jpg')
   })
 
+  it('maps pdf and document slot payloads to the correct playback types', () => {
+    const windows = normalizeScheduleWindows(
+      [
+        {
+          id: 'schedule-item-1',
+          start_at: '2026-03-14T09:00:00.000Z',
+          end_at: '2026-03-14T10:00:00.000Z',
+          priority: 1,
+          presentation: {
+            id: 'presentation-1',
+            name: 'Docs',
+            layout: { id: 'layout-1', aspect_ratio: '16:9', spec: { slots: [] } },
+            slots: [
+              {
+                id: 'slot-item-pdf',
+                slot_id: 'main',
+                media_id: 'media-pdf',
+                order: 0,
+                duration_seconds: 8,
+                fit_mode: 'contain',
+                audio_enabled: false,
+                media: {
+                  id: 'media-pdf',
+                  name: 'Booklet',
+                  type: 'DOCUMENT',
+                  source_content_type: 'application/pdf',
+                },
+              },
+              {
+                id: 'slot-item-office',
+                slot_id: 'main',
+                media_id: 'media-office',
+                order: 1,
+                duration_seconds: 8,
+                fit_mode: 'contain',
+                audio_enabled: false,
+                media: {
+                  id: 'media-office',
+                  name: 'Deck.pptx',
+                  type: 'DOCUMENT',
+                  source_content_type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                },
+              },
+            ],
+          },
+        },
+      ],
+      {
+        'media-pdf': 'https://cdn.example.com/booklet',
+        'media-office': 'https://cdn.example.com/deck',
+      },
+    )
+
+    expect(windows).to.have.length(1)
+    expect(windows[0].items[0].type).to.equal('pdf')
+    expect(windows[0].items[1].type).to.equal('office')
+  })
+
   it('selects the highest priority active window and computes the next transition boundary', () => {
     const evaluation = evaluateScheduleWindows(
       [

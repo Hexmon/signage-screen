@@ -17,6 +17,10 @@ const logger = getLogger('playback-engine')
 
 export type PlaybackState = 'stopped' | 'playing' | 'paused' | 'error' | 'emergency'
 
+function usesTimelinePlayback(playlist: PlaybackPlaylist): boolean {
+  return playlist.mode === 'normal' || playlist.mode === 'emergency'
+}
+
 export class PlaybackEngine extends EventEmitter {
   private state: PlaybackState = 'stopped'
   private scheduler: TimelineScheduler
@@ -58,6 +62,12 @@ export class PlaybackEngine extends EventEmitter {
 
       if (!playlist || playlist.items.length === 0) {
         throw new Error('No playlist available')
+      }
+
+      if (!usesTimelinePlayback(playlist)) {
+        logger.info({ mode: playlist.mode }, 'Skipping timeline playback for non-scheduled playlist')
+        this.stop()
+        return
       }
 
       await this.startPlaylist(playlist)
@@ -168,6 +178,12 @@ export class PlaybackEngine extends EventEmitter {
     const snapshotManager = getSnapshotManager()
 
     snapshotManager.on('playlist-updated', (playlist: PlaybackPlaylist) => {
+      if (!usesTimelinePlayback(playlist)) {
+        logger.info({ mode: playlist.mode }, 'Playlist updated for fallback mode, stopping timeline playback')
+        this.stop()
+        return
+      }
+
       logger.info({ mode: playlist.mode }, 'Playlist updated, restarting playback')
       this.stop()
       this.startPlaylist(playlist).catch((error) => {

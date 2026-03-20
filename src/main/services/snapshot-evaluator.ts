@@ -6,6 +6,7 @@ import {
   SnapshotScheduleItem,
   TimelineItem,
 } from '../../common/types'
+import { getExtensionFromName, getExtensionFromUrl, normalizeMime } from '../../common/media-compat'
 
 export interface NormalizedScheduleWindow {
   id: string
@@ -25,15 +26,50 @@ export interface ScheduleEvaluationResult {
   nextTransitionAt?: number
 }
 
-function inferTypeFromValue(value?: string): MediaType {
-  if (!value) return 'image'
-  const normalized = value.toLowerCase()
-  if (normalized === 'image' || normalized.startsWith('image/')) return 'image'
-  if (normalized === 'video' || normalized.startsWith('video/')) return 'video'
-  if (normalized === 'pdf' || normalized.includes('pdf')) return 'pdf'
-  if (normalized === 'office' || normalized.includes('presentation') || normalized.includes('powerpoint')) return 'office'
-  if (normalized === 'url') return 'url'
-  return 'image'
+function inferTypeFromValue(input: {
+  mediaType?: string
+  sourceContentType?: string
+  mediaName?: string
+  remoteUrl?: string
+}): MediaType {
+  const normalizedType = input.mediaType?.toLowerCase()
+  const normalizedMime = normalizeMime(input.sourceContentType)
+  const extension = getExtensionFromName(input.mediaName) || getExtensionFromUrl(input.remoteUrl)
+
+  if (normalizedType === 'image' || normalizedMime?.startsWith('image/')) return 'image'
+  if (normalizedType === 'video' || normalizedMime?.startsWith('video/')) return 'video'
+  if (normalizedType === 'url') return 'url'
+
+  if (
+    normalizedType === 'pdf' ||
+    normalizedMime === 'application/pdf' ||
+    extension === 'pdf'
+  ) {
+    return 'pdf'
+  }
+
+  if (
+    normalizedType === 'office' ||
+    normalizedType === 'document' ||
+    normalizedMime?.includes('presentation') ||
+    normalizedMime?.includes('powerpoint') ||
+    normalizedMime === 'text/csv' ||
+    normalizedMime === 'application/msword' ||
+    normalizedMime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    extension === 'ppt' ||
+    extension === 'pptx' ||
+    extension === 'csv' ||
+    extension === 'doc' ||
+    extension === 'docx'
+  ) {
+    return 'office'
+  }
+
+  if (normalizedType?.startsWith('image/')) return 'image'
+  if (normalizedType?.startsWith('video/')) return 'video'
+  if (normalizedType?.includes('pdf')) return 'pdf'
+
+  return extension === 'mp4' || extension === 'mov' ? 'video' : 'image'
 }
 
 function normalizeFit(value?: string): FitMode {
@@ -48,6 +84,7 @@ function buildTimelineItem(input: {
   mediaId?: string
   mediaName?: string
   mediaType?: string
+  sourceContentType?: string
   remoteUrl?: string
   durationSeconds?: number
   fit?: string
@@ -64,12 +101,21 @@ function buildTimelineItem(input: {
     id: input.id || mediaId,
     mediaId,
     remoteUrl,
-    type: inferTypeFromValue(input.mediaType),
+    type: inferTypeFromValue({
+      mediaType: input.mediaType,
+      sourceContentType: input.sourceContentType,
+      mediaName: input.mediaName,
+      remoteUrl,
+    }),
     displayMs: Math.max(1, Number(input.durationSeconds || 10)) * 1000,
     fit: normalizeFit(input.fit),
     muted: Boolean(input.muted),
     transitionDurationMs: 0,
-    meta: input.meta,
+    meta: {
+      ...input.meta,
+      name: input.mediaName,
+      source_content_type: input.sourceContentType,
+    },
   }
 }
 
@@ -99,6 +145,7 @@ export function buildWindowItems(
         mediaId: entry.media_id,
         mediaName: entry.media?.name,
         mediaType: entry.media?.type,
+        sourceContentType: entry.media?.source_content_type,
         remoteUrl: entry.media_id ? mediaUrlMap[entry.media_id] : undefined,
         durationSeconds: entry.duration_seconds,
         fit: 'contain',
@@ -120,6 +167,7 @@ export function buildWindowItems(
         mediaId: entry.media_id,
         mediaName: entry.media?.name,
         mediaType: entry.media?.type,
+        sourceContentType: entry.media?.source_content_type,
         remoteUrl: entry.media_id ? mediaUrlMap[entry.media_id] : undefined,
         durationSeconds: entry.duration_seconds,
         fit: entry.fit_mode,

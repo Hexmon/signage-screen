@@ -19,6 +19,10 @@ import { getHttpClient } from './network/http-client'
 const logger = getLogger('player-flow')
 const PAIRING_POLL_INTERVAL_MS = 5000
 
+function requiresTimelinePlayback(playlist: PlaybackPlaylist): boolean {
+  return (playlist.mode === 'normal' || playlist.mode === 'emergency') && playlist.items.length > 0
+}
+
 export class PlayerFlow extends EventEmitter {
   private state: PlayerState = 'BOOT'
   private status: PlayerStatus = {
@@ -255,15 +259,21 @@ export class PlayerFlow extends EventEmitter {
   }
 
   private handlePlaylistUpdate(playlist: PlaybackPlaylist): void {
-    if (!this.playbackReady && playlist.items.length > 0) {
-      void getPlaybackEngine().start()
-      this.playbackReady = true
+    if (requiresTimelinePlayback(playlist)) {
+      if (!this.playbackReady) {
+        void getPlaybackEngine().start()
+        this.playbackReady = true
+      }
+    } else if (this.playbackReady) {
+      getPlaybackEngine().stop()
+      this.playbackReady = false
     }
 
     this.updateStatus({
       mode: playlist.mode,
       online: playlist.mode !== 'offline' && playlist.mode !== 'empty',
       scheduleId: playlist.scheduleId,
+      currentMediaId: requiresTimelinePlayback(playlist) ? this.status.currentMediaId : undefined,
       lastSnapshotAt: playlist.lastSnapshotAt,
       backendAvailable: playlist.mode !== 'offline',
     })

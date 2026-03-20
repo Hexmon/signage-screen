@@ -8,6 +8,80 @@ import './types'
 import { DefaultMediaPlayer } from './default-media-player'
 import { checkMediaCompatibility, CompatResult } from '../common/media-compat'
 
+export function parseAspectRatio(aspectRatio?: string): number | null {
+  if (!aspectRatio || typeof aspectRatio !== 'string') {
+    return null
+  }
+
+  const parts = aspectRatio.split(':')
+  if (parts.length !== 2) {
+    return null
+  }
+
+  const width = Number(parts[0]?.trim())
+  const height = Number(parts[1]?.trim())
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return null
+  }
+
+  return width / height
+}
+
+export function computeSceneStageFrame(
+  aspectRatio: string | undefined,
+  viewportWidth: number,
+  viewportHeight: number,
+): { width: number; height: number; left: number; top: number } {
+  const ratio = parseAspectRatio(aspectRatio)
+  if (!ratio || viewportWidth <= 0 || viewportHeight <= 0) {
+    return {
+      width: viewportWidth,
+      height: viewportHeight,
+      left: 0,
+      top: 0,
+    }
+  }
+
+  const viewportRatio = viewportWidth / viewportHeight
+  if (viewportRatio > ratio) {
+    const height = viewportHeight
+    const width = height * ratio
+    return {
+      width,
+      height,
+      left: (viewportWidth - width) / 2,
+      top: 0,
+    }
+  }
+
+  const width = viewportWidth
+  const height = width / ratio
+  return {
+    width,
+    height,
+    left: 0,
+    top: (viewportHeight - height) / 2,
+  }
+}
+
+export function resolvePlayerContentSource(
+  status: PlayerStatus,
+): 'schedule' | 'default' | 'none' {
+  if (
+    status.state === 'PAIRING_PENDING' ||
+    status.state === 'PAIRING_CONFIRMED' ||
+    status.state === 'PAIRING_COMPLETING'
+  ) {
+    return 'none'
+  }
+
+  if (status.mode === 'default' || status.mode === 'offline' || status.mode === 'empty') {
+    return 'default'
+  }
+
+  return 'schedule'
+}
+
 class Player {
   private canvas: HTMLCanvasElement | null = null
   private currentElement?: HTMLElement
@@ -17,9 +91,6 @@ class Player {
   private activeSource: 'schedule' | 'default' | 'none' = 'schedule'
   private statusOverlay: HTMLElement | null = null
   private statusConnection: HTMLElement | null = null
-  private statusDeviceId: HTMLElement | null = null
-  private statusScheduleId: HTMLElement | null = null
-  private statusMediaId: HTMLElement | null = null
   private statusSnapshot: HTMLElement | null = null
   private modeBanner: HTMLElement | null = null
   private currentCleanup?: () => void
@@ -40,9 +111,6 @@ class Player {
     this.defaultMediaContainer = document.getElementById('default-media-container')
     this.statusOverlay = document.getElementById('status-overlay')
     this.statusConnection = document.getElementById('status-connection')
-    this.statusDeviceId = document.getElementById('status-device-id')
-    this.statusScheduleId = document.getElementById('status-schedule-id')
-    this.statusMediaId = document.getElementById('status-media-id')
     this.statusSnapshot = document.getElementById('status-snapshot-time')
     this.modeBanner = document.getElementById('mode-banner')
 
@@ -164,17 +232,7 @@ class Player {
   }
 
   private updateContentSource(status: PlayerStatus): void {
-    if (
-      status.state === 'PAIRING_PENDING' ||
-      status.state === 'PAIRING_CONFIRMED' ||
-      status.state === 'PAIRING_COMPLETING'
-    ) {
-      this.setActiveSource('none')
-      return
-    }
-
-    const shouldShowDefault = status.mode === 'offline' || status.mode === 'empty'
-    this.setActiveSource(shouldShowDefault ? 'default' : 'schedule')
+    this.setActiveSource(resolvePlayerContentSource(status))
   }
 
   private setActiveSource(source: 'schedule' | 'default' | 'none'): void {
@@ -210,17 +268,7 @@ class Player {
         return
       }
 
-      const sourceContentType =
-        typeof item.meta?.['source_content_type'] === 'string' ? (item.meta?.['source_content_type'] as string) : undefined
-      const mediaName = typeof item.meta?.['name'] === 'string' ? (item.meta?.['name'] as string) : undefined
-      const mediaUrl = item.localUrl || item.remoteUrl || item.url || item.localPath
-
-      const compat = checkMediaCompatibility({
-        type: item.type,
-        source_content_type: sourceContentType,
-        name: mediaName,
-        media_url: mediaUrl,
-      })
+      const compat = this.getItemCompatibility(item)
 
       if (compat.status === 'PLAYABLE_NOW') {
         this.log('debug', 'Media compatibility check', { itemId: item.id, compat })
@@ -245,6 +293,9 @@ class Player {
           break
         case 'pdf':
           element = await this.renderPDF(item)
+          break
+        case 'office':
+          element = this.renderDocumentPlaceholder(item, compat)
           break
         case 'url':
           element = await this.renderURL(item)
@@ -368,6 +419,19 @@ class Player {
     container.style.backgroundColor = '#000'
     container.dataset['sceneId'] = sceneItem.id
 
+    const stage = document.createElement('div')
+    stage.style.position = 'absolute'
+    stage.style.overflow = 'hidden'
+    stage.style.backgroundColor = '#000'
+
+    const frame = computeSceneStageFrame(scene.aspectRatio, window.innerWidth, window.innerHeight)
+    stage.style.left = `${frame.left}px`
+    stage.style.top = `${frame.top}px`
+    stage.style.width = `${frame.width}px`
+    stage.style.height = `${frame.height}px`
+    stage.dataset['sceneAspectRatio'] = scene.aspectRatio || 'free'
+    container.appendChild(stage)
+
     const cleanupCallbacks: Array<() => void> = []
 
     scene.slots.forEach((slot) => {
@@ -377,7 +441,7 @@ class Player {
       slotContainer.style.backgroundColor = '#000'
       this.applySlotBounds(slotContainer, slot)
 
-      container.appendChild(slotContainer)
+      stage.appendChild(slotContainer)
       cleanupCallbacks.push(this.mountSceneSlot(slotContainer, slot, scene.startsAt))
     })
 
@@ -396,6 +460,13 @@ class Player {
     if (item.type === 'url') {
       if (item.url) return item.url
       if (item.remoteUrl) return item.remoteUrl
+    }
+
+    const sourceContentType =
+      typeof item.meta?.['source_content_type'] === 'string' ? String(item.meta?.['source_content_type']) : undefined
+    const localSourceLooksLikePdf = Boolean(item.localUrl && /\.pdf(\?|#|$)/i.test(item.localUrl))
+    if (item.type === 'pdf' && sourceContentType === 'application/pdf' && item.remoteUrl && !localSourceLooksLikePdf) {
+      return item.remoteUrl
     }
 
     if (item.localUrl) {
@@ -498,38 +569,11 @@ class Player {
   private showCompatibilityPlaceholder(result: CompatResult, item: TimelineItem): void {
     if (!this.mediaContainer) return
 
-    const container = document.createElement('div')
-    container.style.display = 'flex'
-    container.style.flexDirection = 'column'
-    container.style.alignItems = 'center'
-    container.style.justifyContent = 'center'
-    container.style.width = '100%'
-    container.style.height = '100%'
-    container.style.background = '#000'
-    container.style.color = '#fff'
-    container.style.textAlign = 'center'
-
-    const title = document.createElement('div')
-    title.textContent = 'Media playback not supported yet'
-    title.style.fontSize = '24px'
-    title.style.fontWeight = '600'
-    title.style.marginBottom = '10px'
-
-    const details = document.createElement('div')
-    details.style.fontSize = '14px'
-    details.style.opacity = '0.8'
-
-    const parts = [
-      `Kind: ${result.kind}`,
-      `Ext: ${result.normalizedExt || '-'}`,
-      `Mime: ${result.normalizedMime || '-'}`,
-      `Media: ${item.mediaId || item.id}`,
-    ]
-
-    details.textContent = parts.join(' | ')
-
-    container.appendChild(title)
-    container.appendChild(details)
+    const container = this.createMediaPreviewCard(
+      item,
+      result.kind === 'DOCUMENT' ? 'Document preview' : 'Media playback not supported yet',
+      result.reason,
+    )
 
     this.showElement(container)
     this.currentElement = container
@@ -543,18 +587,6 @@ class Player {
     if (this.statusConnection) {
       this.statusConnection.textContent = status.online ? 'ONLINE' : 'OFFLINE'
       this.statusConnection.className = status.online ? 'status-pill online' : 'status-pill offline'
-    }
-
-    if (this.statusDeviceId) {
-      this.statusDeviceId.textContent = status.deviceId || '-'
-    }
-
-    if (this.statusScheduleId) {
-      this.statusScheduleId.textContent = status.scheduleId || '-'
-    }
-
-    if (this.statusMediaId) {
-      this.statusMediaId.textContent = status.currentMediaId || '-'
     }
 
     if (this.statusSnapshot) {
@@ -672,6 +704,15 @@ class Player {
     }
 
     const renderIntoSlot = async (item: TimelineItem): Promise<HTMLElement> => {
+      const compat = this.getItemCompatibility(item)
+      if (compat.status === 'ACCEPTED_BUT_NOT_SUPPORTED_YET') {
+        return this.renderDocumentPlaceholder(item, compat)
+      }
+
+      if (compat.status === 'REJECTED') {
+        return this.createMediaPreviewCard(item, 'Preview unavailable', compat.reason)
+      }
+
       switch (item.type) {
         case 'image':
           return await this.renderImage(item)
@@ -679,6 +720,8 @@ class Player {
           return await this.renderVideo(item)
         case 'pdf':
           return await this.renderPDF(item)
+        case 'office':
+          return this.renderDocumentPlaceholder(item, compat)
         case 'url':
           return await this.renderURL(item)
         default:
@@ -736,6 +779,14 @@ class Player {
           itemId: item.id,
           error: (error as Error).message,
         })
+
+        const placeholder = this.createMediaPreviewCard(item, 'Preview unavailable', (error as Error).message)
+        placeholder.style.opacity = '1'
+        while (container.firstChild) {
+          container.removeChild(container.firstChild)
+        }
+        container.appendChild(placeholder)
+        activeElement = placeholder
       }
     }
 
@@ -768,13 +819,96 @@ class Player {
     this.currentCleanup = undefined
     cleanup()
   }
+
+  private getItemCompatibility(item: TimelineItem): CompatResult {
+    const sourceContentType =
+      typeof item.meta?.['source_content_type'] === 'string' ? (item.meta?.['source_content_type'] as string) : undefined
+    const mediaName = typeof item.meta?.['name'] === 'string' ? (item.meta?.['name'] as string) : undefined
+    const mediaUrl = item.localUrl || item.remoteUrl || item.url || item.localPath
+
+    return checkMediaCompatibility({
+      type: item.type,
+      source_content_type: sourceContentType,
+      name: mediaName,
+      media_url: mediaUrl,
+    })
+  }
+
+  private renderDocumentPlaceholder(item: TimelineItem, compat?: CompatResult): HTMLElement {
+    return this.createMediaPreviewCard(
+      item,
+      'Document preview',
+      compat?.reason || 'Document rendering is not available for this file',
+    )
+  }
+
+  private createMediaPreviewCard(item: TimelineItem, titleText: string, subtitleText?: string): HTMLElement {
+    const kind = item.type === 'video' ? 'VIDEO' : item.type === 'pdf' || item.type === 'office' ? 'DOCUMENT' : 'MEDIA'
+    const name = typeof item.meta?.['name'] === 'string' ? String(item.meta?.['name']) : item.mediaId || item.id
+
+    const container = document.createElement('div')
+    container.style.display = 'flex'
+    container.style.flexDirection = 'column'
+    container.style.alignItems = 'center'
+    container.style.justifyContent = 'center'
+    container.style.width = '100%'
+    container.style.height = '100%'
+    container.style.padding = '18px'
+    container.style.gap = '10px'
+    container.style.background = 'linear-gradient(180deg, rgba(27,31,38,0.95), rgba(15,18,24,0.98))'
+    container.style.color = '#fff'
+    container.style.textAlign = 'center'
+    container.style.border = '1px solid rgba(255,255,255,0.12)'
+
+    const badge = document.createElement('div')
+    badge.textContent = kind
+    badge.style.fontSize = '11px'
+    badge.style.fontWeight = '700'
+    badge.style.letterSpacing = '0.18em'
+    badge.style.textTransform = 'uppercase'
+    badge.style.opacity = '0.7'
+
+    const title = document.createElement('div')
+    title.textContent = titleText
+    title.style.fontSize = '18px'
+    title.style.fontWeight = '700'
+    title.style.lineHeight = '1.2'
+
+    const nameEl = document.createElement('div')
+    nameEl.textContent = name
+    nameEl.style.fontSize = '13px'
+    nameEl.style.opacity = '0.86'
+    nameEl.style.maxWidth = '100%'
+    nameEl.style.wordBreak = 'break-word'
+
+    container.appendChild(badge)
+    container.appendChild(title)
+    container.appendChild(nameEl)
+
+    if (subtitleText) {
+      const subtitle = document.createElement('div')
+      subtitle.textContent = subtitleText
+      subtitle.style.fontSize = '12px'
+      subtitle.style.opacity = '0.58'
+      subtitle.style.maxWidth = '100%'
+      subtitle.style.wordBreak = 'break-word'
+      container.appendChild(subtitle)
+    }
+
+    return container
+  }
 }
 
-// Initialize player when DOM is ready
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => {
+export function bootstrapPlayer(): void {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      new Player()
+    })
+  } else {
     new Player()
-  })
-} else {
-  new Player()
+  }
+}
+
+if (typeof document !== 'undefined') {
+  bootstrapPlayer()
 }

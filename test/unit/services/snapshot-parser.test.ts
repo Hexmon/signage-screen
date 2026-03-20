@@ -69,6 +69,30 @@ describe('Snapshot Parser', () => {
     expect(parsed.defaultItem?.remoteUrl).to.equal('https://cdn.example.com/default.jpg')
   })
 
+  it('should parse root-level default media from wrapped device snapshot responses', () => {
+    const raw = {
+      device_id: 'device-1',
+      snapshot: {
+        schedule: {
+          id: 'sched-5',
+          items: [],
+        },
+      },
+      default_media: {
+        media_id: 'media-default',
+        media_url: 'https://cdn.example.com/default.jpg',
+        type: 'image',
+        display_ms: 12000,
+      },
+    }
+
+    const parsed = parseSnapshotResponse(raw)
+
+    expect(parsed.defaultItem).to.exist
+    expect(parsed.defaultItem?.mediaId).to.equal('media-default')
+    expect(parsed.defaultItem?.remoteUrl).to.equal('https://cdn.example.com/default.jpg')
+  })
+
   it('should parse timed schedule windows from published snapshot payloads', () => {
     const raw = {
       snapshot_id: 'snap-4',
@@ -118,10 +142,116 @@ describe('Snapshot Parser', () => {
 
     expect(parsed.snapshotId).to.equal('snap-4')
     expect(parsed.scheduleTimezone).to.equal('Asia/Kolkata')
+    expect(parsed.items).to.have.length(0)
     expect(parsed.scheduleWindows).to.have.length(1)
     expect(parsed.scheduleWindows[0].priority).to.equal(5)
     expect(parsed.scheduleWindows[0].items[0].remoteUrl).to.equal('https://cdn.example.com/lobby-loop.mp4')
     expect(parsed.scheduleWindows[0].items[0].fit).to.equal('cover')
+  })
+
+  it('should not misread timed layout windows as direct playlist items', () => {
+    const raw = {
+      snapshot_id: 'snap-6',
+      schedule: {
+        id: 'sched-6',
+        items: [
+          {
+            id: 'schedule-item-1',
+            start_at: '2026-03-18T14:12:00.000Z',
+            end_at: '2026-03-18T15:12:00.000Z',
+            priority: 2,
+            presentation: {
+              id: 'presentation-1',
+              name: 'Layout scene',
+              layout: {
+                id: 'layout-1',
+                aspect_ratio: '16:9',
+                spec: { slots: [{ id: 'slot-1', x: 0, y: 0, w: 1, h: 1 }] },
+              },
+              slots: [
+                {
+                  id: 'slot-item-1',
+                  slot_id: 'slot-1',
+                  media_id: 'media-1',
+                  order: 0,
+                  duration_seconds: 15,
+                  fit_mode: 'cover',
+                  audio_enabled: true,
+                  media: {
+                    id: 'media-1',
+                    name: 'Loop',
+                    type: 'VIDEO',
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+      media_urls: {
+        'media-1': 'https://cdn.example.com/loop.mp4',
+      },
+    }
+
+    const parsed = parseSnapshotResponse(raw)
+
+    expect(parsed.items).to.deep.equal([])
+    expect(parsed.scheduleWindows).to.have.length(1)
+    expect(parsed.scheduleWindows[0].items).to.have.length(1)
+    expect(parsed.scheduleWindows[0].items[0].mediaId).to.equal('media-1')
+  })
+
+  it('should read media_urls from wrapped device snapshot responses', () => {
+    const raw = {
+      device_id: 'device-1',
+      snapshot: {
+        schedule: {
+          id: 'sched-7',
+          items: [
+            {
+              id: 'schedule-item-1',
+              start_at: '2026-03-18T14:12:00.000Z',
+              end_at: '2026-03-18T15:12:00.000Z',
+              priority: 2,
+              presentation: {
+                id: 'presentation-1',
+                name: 'Layout scene',
+                layout: {
+                  id: 'layout-1',
+                  aspect_ratio: '16:9',
+                  spec: { slots: [{ id: 'slot-1', x: 0, y: 0, w: 1, h: 1 }] },
+                },
+                slots: [
+                  {
+                    id: 'slot-item-1',
+                    slot_id: 'slot-1',
+                    media_id: 'media-1',
+                    order: 0,
+                    duration_seconds: 15,
+                    fit_mode: 'cover',
+                    audio_enabled: true,
+                    media: {
+                      id: 'media-1',
+                      name: 'Loop',
+                      type: 'VIDEO',
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      },
+      media_urls: {
+        'media-1': 'https://cdn.example.com/loop.mp4',
+      },
+    }
+
+    const parsed = parseSnapshotResponse(raw)
+
+    expect(parsed.scheduleWindows).to.have.length(1)
+    expect(parsed.scheduleWindows[0].items).to.have.length(1)
+    expect(parsed.scheduleWindows[0].items[0].remoteUrl).to.equal('https://cdn.example.com/loop.mp4')
   })
 
   it('should ignore expired emergency overrides', () => {

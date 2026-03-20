@@ -319,6 +319,8 @@ export class SnapshotManager extends EventEmitter {
         continue
       }
 
+       localPath = await this.normalizeLocalMediaPath(item, localPath)
+
       hydrated.push({
         ...item,
         localPath,
@@ -327,6 +329,32 @@ export class SnapshotManager extends EventEmitter {
     }
 
     return hydrated
+  }
+
+  private async normalizeLocalMediaPath(item: TimelineItem, localPath: string): Promise<string> {
+    if (item.type !== 'pdf') {
+      return localPath
+    }
+
+    const sourceContentType =
+      typeof item.meta?.['source_content_type'] === 'string' ? String(item.meta?.['source_content_type']) : undefined
+    const alreadyPdf = /\.pdf$/i.test(localPath)
+    if (alreadyPdf || sourceContentType !== 'application/pdf') {
+      return localPath
+    }
+
+    const normalizedPath = `${localPath}.pdf`
+    if (fs.existsSync(normalizedPath)) {
+      return normalizedPath
+    }
+
+    try {
+      await fs.promises.copyFile(localPath, normalizedPath)
+      return normalizedPath
+    } catch (error) {
+      logger.warn({ localPath, normalizedPath, error }, 'Failed to create normalized PDF cache alias')
+      return localPath
+    }
   }
 
   private buildLayoutSceneItems(window: NormalizedScheduleWindow, items: TimelineItem[]): TimelineItem[] {

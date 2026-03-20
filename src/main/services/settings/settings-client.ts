@@ -43,7 +43,11 @@ export function normalizeDefaultMediaResponse(raw: unknown): DefaultMediaRespons
 
   const payload = raw as any
   const source =
-    payload.source === 'ASPECT_RATIO' || payload.source === 'GLOBAL' || payload.source === 'NONE'
+    payload.source === 'SCREEN' ||
+    payload.source === 'GROUP' ||
+    payload.source === 'ASPECT_RATIO' ||
+    payload.source === 'GLOBAL' ||
+    payload.source === 'NONE'
       ? payload.source
       : undefined
   const aspectRatio = typeof payload.aspect_ratio === 'string' ? payload.aspect_ratio : null

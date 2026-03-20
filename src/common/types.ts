@@ -119,7 +119,7 @@ export interface DefaultMediaItem {
 }
 
 export interface DefaultMediaResponse {
-  source?: 'ASPECT_RATIO' | 'GLOBAL' | 'NONE'
+  source?: 'SCREEN' | 'GROUP' | 'ASPECT_RATIO' | 'GLOBAL' | 'NONE'
   aspect_ratio?: string | null
   media_id: string | null
   media: DefaultMediaItem | null
@@ -245,6 +245,7 @@ export interface SnapshotPresentationMedia {
   name?: string
   type?: string
   status?: string
+  source_content_type?: string
   source_bucket?: string
   source_object_key?: string
   ready_object_id?: string | null

@@ -481,4 +481,50 @@ describe('Player Flow', () => {
 
     await playerFlow.stop()
   })
+
+  it('should stop timeline playback and switch status to default when fallback media is active', async () => {
+    const { getPlayerFlow } = require('../../../src/main/services/player-flow')
+    const { getDeviceStateStore } = require('../../../src/main/services/device-state-store')
+    const { getPairingService } = require('../../../src/main/services/pairing-service')
+    const { getSnapshotManager } = require('../../../src/main/services/snapshot-manager')
+
+    const stateStore = getDeviceStateStore()
+    await stateStore.clearIdentity()
+    await stateStore.update({
+      deviceId: '11111111-1111-4111-8111-111111111111',
+      fingerprint: 'fingerprint-1',
+    })
+
+    const pairingService = getPairingService()
+    sandbox.stub(pairingService, 'getStoredIdentityHealth').returns({ health: 'complete', issues: [] })
+    sandbox.stub(pairingService, 'hasTrustworthyDeviceId').returns(true)
+
+    const stubs = createCompleteBootstrapStubs()
+    stubs.snapshotManager.refreshSnapshot.resolves({ mode: 'default', items: [], scheduleId: undefined })
+    const playbackStopStub = sandbox.stub(stubs.playbackEngine, 'stop').returns()
+
+    const playerFlow = getPlayerFlow()
+    await playerFlow.start()
+
+    getSnapshotManager().emit('playlist-updated', {
+      mode: 'default',
+      items: [
+        {
+          id: 'default-item-1',
+          type: 'image',
+          displayMs: 10000,
+          fit: 'contain',
+          muted: true,
+          transitionDurationMs: 0,
+        },
+      ],
+      lastSnapshotAt: new Date().toISOString(),
+    })
+
+    expect(playerFlow.getStatus().mode).to.equal('default')
+    expect(playbackStopStub.called).to.equal(true)
+    expect(stubs.playbackEngine.start.called).to.equal(false)
+
+    await playerFlow.stop()
+  })
 })
