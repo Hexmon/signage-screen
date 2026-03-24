@@ -34,4 +34,32 @@ describe('Player layout helpers', () => {
 
     expect(source).to.equal('default')
   })
+
+  it('uses manual replay for loop-enabled scheduled videos', async () => {
+    const { shouldUseManualVideoReplay } = await import('../../../src/renderer/player.ts')
+
+    expect(
+      shouldUseManualVideoReplay({
+        id: 'video-1',
+        type: 'video',
+        displayMs: 30000,
+        fit: 'cover',
+        muted: true,
+        loop: true,
+        transitionDurationMs: 0,
+      }),
+    ).to.equal(true)
+
+    expect(
+      shouldUseManualVideoReplay({
+        id: 'video-2',
+        type: 'video',
+        displayMs: 30000,
+        fit: 'cover',
+        muted: true,
+        loop: false,
+        transitionDurationMs: 0,
+      }),
+    ).to.equal(false)
+  })
 })

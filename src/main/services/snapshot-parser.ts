@@ -74,6 +74,7 @@ function normalizeItem(input: any, mediaUrlMap: SnapshotMediaUrlMap): TimelineIt
   const fit = normalizeFit(input.fit || input.fit_mode)
   const muted = Boolean(input.muted ?? false)
   const transitionDurationMs = Number(input.transition_ms ?? input.transitionDurationMs ?? 0) || 0
+  const loop = Boolean(input.loop ?? input.loop_enabled ?? false)
 
   const id = input.id || mediaId || `item-${Math.random().toString(36).slice(2, 8)}`
 
@@ -85,6 +86,7 @@ function normalizeItem(input: any, mediaUrlMap: SnapshotMediaUrlMap): TimelineIt
     displayMs,
     fit,
     muted,
+    loop,
     sha256: input.sha256,
     meta: input.meta,
     transitionDurationMs,

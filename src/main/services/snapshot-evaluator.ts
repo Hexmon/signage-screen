@@ -89,6 +89,7 @@ function buildTimelineItem(input: {
   durationSeconds?: number
   fit?: string
   muted?: boolean
+  loopEnabled?: boolean
   meta?: Record<string, unknown>
 }): TimelineItem | null {
   const mediaId = input.mediaId || input.id
@@ -110,6 +111,7 @@ function buildTimelineItem(input: {
     displayMs: Math.max(1, Number(input.durationSeconds || 10)) * 1000,
     fit: normalizeFit(input.fit),
     muted: Boolean(input.muted),
+    loop: Boolean(input.loopEnabled),
     transitionDurationMs: 0,
     meta: {
       ...input.meta,
@@ -150,6 +152,7 @@ export function buildWindowItems(
         durationSeconds: entry.duration_seconds,
         fit: 'contain',
         muted: true,
+        loopEnabled: false,
         meta: {
           ...layoutMeta,
           source: 'schedule',
@@ -172,6 +175,7 @@ export function buildWindowItems(
         durationSeconds: entry.duration_seconds,
         fit: entry.fit_mode,
         muted: entry.audio_enabled === true ? false : true,
+        loopEnabled: entry.loop_enabled === true,
         meta: {
           ...layoutMeta,
           source: 'schedule',

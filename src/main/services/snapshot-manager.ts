@@ -430,6 +430,7 @@ export class SnapshotManager extends EventEmitter {
         displayMs: remainingMs,
         fit: 'contain',
         muted: true,
+        loop: false,
         transitionDurationMs: 0,
         meta: {
           source: 'schedule',

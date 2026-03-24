@@ -26,6 +26,7 @@ describe('Snapshot Evaluator', () => {
                 duration_seconds: 8,
                 fit_mode: 'contain',
                 audio_enabled: false,
+                loop_enabled: true,
                 media: { id: 'media-1', name: 'Loop', type: 'IMAGE' },
               },
             ],
@@ -41,6 +42,7 @@ describe('Snapshot Evaluator', () => {
     expect(windows[0].items).to.have.length(1)
     expect(windows[0].items[0].displayMs).to.equal(8000)
     expect(windows[0].items[0].remoteUrl).to.equal('https://cdn.example.com/loop.jpg')
+    expect(windows[0].items[0].loop).to.equal(true)
   })
 
   it('maps pdf and document slot payloads to the correct playback types', () => {

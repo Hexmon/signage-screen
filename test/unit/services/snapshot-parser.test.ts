@@ -122,6 +122,7 @@ describe('Snapshot Parser', () => {
                   duration_seconds: 12,
                   fit_mode: 'cover',
                   audio_enabled: false,
+                  loop_enabled: true,
                   media: {
                     id: 'media-slot-1',
                     name: 'Lobby Loop',
@@ -147,6 +148,7 @@ describe('Snapshot Parser', () => {
     expect(parsed.scheduleWindows[0].priority).to.equal(5)
     expect(parsed.scheduleWindows[0].items[0].remoteUrl).to.equal('https://cdn.example.com/lobby-loop.mp4')
     expect(parsed.scheduleWindows[0].items[0].fit).to.equal('cover')
+    expect(parsed.scheduleWindows[0].items[0].loop).to.equal(true)
   })
 
   it('should not misread timed layout windows as direct playlist items', () => {

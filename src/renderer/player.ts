@@ -82,6 +82,10 @@ export function resolvePlayerContentSource(
   return 'schedule'
 }
 
+export function shouldUseManualVideoReplay(item: TimelineItem): boolean {
+  return item.type === 'video' && item.loop === true
+}
+
 class Player {
   private canvas: HTMLCanvasElement | null = null
   private currentElement?: HTMLElement
@@ -349,13 +353,23 @@ class Player {
   private async renderVideo(item: TimelineItem): Promise<HTMLElement> {
     return new Promise((resolve, reject) => {
       const video = document.createElement('video')
+      const source = this.getMediaSource(item)
+      const useManualReplay = shouldUseManualVideoReplay(item)
       video.style.position = 'absolute'
       video.style.top = '0'
       video.style.left = '0'
       video.style.width = '100%'
       video.style.height = '100%'
       video.muted = item.muted
-      video.loop = false
+      video.loop = !useManualReplay && item.loop
+
+      this.log('debug', 'Preparing video playback', {
+        itemId: item.id,
+        displayMs: item.displayMs,
+        loop: item.loop,
+        source,
+        slotId: typeof item.meta?.['slotId'] === 'string' ? item.meta?.['slotId'] : null,
+      })
 
       video.onloadeddata = () => {
         this.log('debug', 'Video loaded', { itemId: item.id })
@@ -369,7 +383,21 @@ class Player {
         reject(new Error(`Failed to load video: ${item.mediaId || item.objectKey || item.url}`))
       }
 
-      video.src = this.getMediaSource(item)
+      if (useManualReplay) {
+        video.onended = () => {
+          this.log('debug', 'Manually replaying loop-enabled video', {
+            itemId: item.id,
+            displayMs: item.displayMs,
+            source,
+          })
+          video.currentTime = 0
+          video.play().catch((error) => {
+            this.log('error', 'Failed to replay loop-enabled video', { error: error.message, itemId: item.id })
+          })
+        }
+      }
+
+      video.src = source
     })
   }
 
@@ -741,6 +769,15 @@ class Player {
       }
 
       try {
+        this.log('debug', 'Rendering scene slot item', {
+          slotId: slot.id,
+          itemId: item.id,
+          mediaType: item.type,
+          displayMs: item.displayMs,
+          loop: item.loop,
+          source: item.localUrl || item.localPath || item.remoteUrl || item.url || null,
+        })
+
         const nextElement = await renderIntoSlot(item)
         this.applyFitMode(nextElement, item.fit)
         nextElement.style.opacity = '0'

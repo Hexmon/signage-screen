@@ -171,6 +171,7 @@ export interface TimelineItem {
   displayMs: number
   fit: FitMode
   muted: boolean
+  loop: boolean
   sha256?: string
   meta?: Record<string, unknown>
   transitionDurationMs: number
@@ -268,6 +269,7 @@ export interface SnapshotPresentationSlotItem {
   duration_seconds?: number
   fit_mode?: FitMode | string
   audio_enabled?: boolean
+  loop_enabled?: boolean
   media?: SnapshotPresentationMedia | null
 }
 
