@@ -33,7 +33,7 @@ Edit `config.json` with your settings:
 ```json
 {
   "apiBase": "https://your-api-server.com",
-  "wsUrl": "wss://your-api-server.com/ws",
+    "wsUrl": "wss://your-api-server.com/ws",
   "deviceId": "",
   "runtime": {
     "mode": "dev"
@@ -46,6 +46,8 @@ Edit `config.json` with your settings:
 
 For initial testing, you can disable mTLS by setting `"enabled": false`.
 `runtime.mode` only supports `dev`, `qa`, and `production`.
+
+The player switches scheduled content based on the device snapshot payload. In normal runtime, newly published schedules reach the device through backend `REFRESH` commands plus command polling, not through the raw `wsUrl` setting alone.
 
 ### 3. Build the Application
 

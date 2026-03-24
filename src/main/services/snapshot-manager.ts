@@ -244,6 +244,10 @@ export class SnapshotManager extends EventEmitter {
         mode = 'normal'
         const hydratedWindowItems = await this.attachLocalMedia(evaluation.items)
         items = this.buildLayoutSceneItems(evaluation.activeWindow, hydratedWindowItems)
+      } else if (typeof nextTransitionAt === 'number' && nextTransitionAt > Date.now()) {
+        // Keep default media hidden while an upcoming scheduled window is already reserved/published.
+        mode = 'normal'
+        items = []
       } else if (snapshot.defaultItem) {
         mode = 'default'
         items = await this.attachLocalMedia([snapshot.defaultItem])

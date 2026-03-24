@@ -13,7 +13,7 @@ Production-grade Ubuntu Electron digital signage player with offline-first archi
 - **Emergency Override**: High-priority interrupt system
 - **Proof-of-Play**: Comprehensive playback tracking with offline spooling
 - **Telemetry & Health**: System metrics, heartbeats, and health endpoints
-- **Device Commands**: Remote control via polling or WebSocket push
+- **Device Commands**: Remote control via device-command polling; publish refresh is command-driven
 - **Power Management**: DPMS control and scheduled on/off times
 
 ### Security
@@ -117,7 +117,7 @@ Configuration is loaded from (in order of precedence):
   },
   "intervals": {
     "heartbeatMs": 60000,
-    "commandPollMs": 30000,
+    "commandPollMs": 5000,
     "schedulePollMs": 300000,
     "healthCheckMs": 60000
   },
@@ -165,6 +165,13 @@ export HEXMON_MTLS_ENABLED="true"
 export HEXMON_CACHE_MAX_BYTES="10737418240"
 export HEXMON_LOG_LEVEL="debug"
 ```
+
+## Schedule refresh model
+
+- The player learns schedule timing from `GET /api/v1/device/:deviceId/snapshot`.
+- After a schedule is published, the backend queues a `REFRESH` device command for affected screens.
+- The player polls device commands, fetches a fresh snapshot immediately, and then uses its local schedule boundary timer to switch at the exact `start_at`.
+- The checked-in raw `wsUrl` setting is not the authoritative publish-to-screen path for playback updates in the current runtime.
 
 ## Device Pairing
 

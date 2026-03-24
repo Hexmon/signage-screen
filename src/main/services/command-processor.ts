@@ -10,6 +10,7 @@ import { getCacheManager } from './cache/cache-manager'
 import { getScreenshotService } from './screenshot-service'
 import { getDeviceStateStore } from './device-state-store'
 import { getLifecycleEvents } from './lifecycle-events'
+import { getDefaultMediaService } from './settings/default-media-service'
 
 const logger = getLogger('command-processor')
 
@@ -192,6 +193,11 @@ export class CommandProcessor {
 
   private async handleRefreshSchedule(): Promise<CommandResult> {
     await getSnapshotManager().refreshSnapshot()
+    try {
+      await getDefaultMediaService().refreshNow('refresh-command')
+    } catch (error) {
+      logger.warn({ error }, 'Default media refresh failed during schedule refresh command')
+    }
     return {
       success: true,
       message: 'Schedule refreshed',

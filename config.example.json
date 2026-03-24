@@ -21,7 +21,7 @@
   },
   "intervals": {
     "heartbeatMs": 30000,
-    "commandPollMs": 30000,
+    "commandPollMs": 5000,
     "schedulePollMs": 300000,
     "defaultMediaPollMs": 300000,
     "healthCheckMs": 60000,

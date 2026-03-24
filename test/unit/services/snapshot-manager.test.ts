@@ -165,8 +165,8 @@ describe('Snapshot Manager', () => {
     await clock.tickAsync(0)
 
     const initialPlaylist = snapshotManager.getCurrentPlaylist()
-    expect(initialPlaylist?.mode).to.equal('default')
-    expect(initialPlaylist?.items.map((item: any) => item.mediaId)).to.deep.equal(['media-default'])
+    expect(initialPlaylist?.mode).to.equal('normal')
+    expect(initialPlaylist?.items).to.deep.equal([])
 
     await clock.tickAsync(1000)
 

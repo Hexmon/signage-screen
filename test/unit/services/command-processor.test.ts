@@ -71,12 +71,20 @@ describe('Command Processor', () => {
     const { getCommandProcessor } = require('../../../src/main/services/command-processor')
     const { getSnapshotManager } = require('../../../src/main/services/snapshot-manager')
     const { getHttpClient } = require('../../../src/main/services/network/http-client')
+    const { getDefaultMediaService } = require('../../../src/main/services/settings/default-media-service')
 
     const commandProcessor = getCommandProcessor()
     const snapshotManager = getSnapshotManager()
     const httpClient = getHttpClient()
+    const defaultMediaService = getDefaultMediaService()
 
     const refreshStub = sandbox.stub(snapshotManager, 'refreshSnapshot').resolves({ mode: 'normal', items: [], scheduleId: 'sched-1' })
+    const defaultRefreshStub = sandbox.stub(defaultMediaService, 'refreshNow').resolves({
+      source: 'NONE',
+      aspect_ratio: null,
+      media_id: null,
+      media: null,
+    })
     sandbox.stub(httpClient, 'post').resolves({ success: true, timestamp: new Date().toISOString() })
 
     const command = {
@@ -91,6 +99,7 @@ describe('Command Processor', () => {
     await commandProcessor.ingestCommands([command], 'poll')
 
     expect(refreshStub.calledOnce).to.be.true
+    expect(defaultRefreshStub.calledOnceWithExactly('refresh-command')).to.be.true
   })
 
   it('should persist recent command ledger entries for restart safety', async () => {
@@ -101,12 +110,20 @@ describe('Command Processor', () => {
     const { getCommandProcessor } = require('../../../src/main/services/command-processor')
     const { getSnapshotManager } = require('../../../src/main/services/snapshot-manager')
     const { getHttpClient } = require('../../../src/main/services/network/http-client')
+    const { getDefaultMediaService } = require('../../../src/main/services/settings/default-media-service')
 
     const commandProcessor = getCommandProcessor()
     const snapshotManager = getSnapshotManager()
     const httpClient = getHttpClient()
+    const defaultMediaService = getDefaultMediaService()
 
     sandbox.stub(snapshotManager, 'refreshSnapshot').resolves({ mode: 'normal', items: [], scheduleId: 'sched-1' })
+    sandbox.stub(defaultMediaService, 'refreshNow').resolves({
+      source: 'NONE',
+      aspect_ratio: null,
+      media_id: null,
+      media: null,
+    })
     sandbox.stub(httpClient, 'post').resolves({ success: true, timestamp: new Date().toISOString() })
 
     await commandProcessor.ingestCommands(
