@@ -281,14 +281,23 @@ export class PairingService {
     try {
       const config = getConfigManager().getConfig()
       const apiUrl = new URL(config.apiBase)
+      diagnostics.apiBase = config.apiBase
+      diagnostics.apiHost = apiUrl.hostname
+      diagnostics.apiIsLoopback = this.isLoopbackHost(apiUrl.hostname)
+      diagnostics.apiIsPrivate = this.isPrivateIpv4(apiUrl.hostname)
+
+      if (diagnostics.apiIsLoopback) {
+        diagnostics.dnsResolution = true
+      } else {
       const dns = await import('dns')
-      await new Promise<void>((resolve, reject) => {
-        dns.resolve4(apiUrl.hostname, (err) => {
+        await new Promise<void>((resolve, reject) => {
+          dns.lookup(apiUrl.hostname, (err) => {
           if (err) reject(err)
           else resolve()
         })
       })
       diagnostics.dnsResolution = true
+      }
     } catch (error) {
       logger.warn({ error }, 'DNS resolution failed')
     }
@@ -429,6 +438,33 @@ export class PairingService {
     }
 
     return addresses
+  }
+
+  private isLoopbackHost(hostname: string): boolean {
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'
+  }
+
+  private isPrivateIpv4(hostname: string): boolean {
+    if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) {
+      return false
+    }
+
+    const parts = hostname.split('.')
+    if (parts.length !== 4) {
+      return false
+    }
+
+    const a = Number.parseInt(parts[0] || '', 10)
+    const b = Number.parseInt(parts[1] || '', 10)
+
+    if (Number.isNaN(a) || Number.isNaN(b)) {
+      return false
+    }
+
+    if (a === 10) return true
+    if (a === 172 && b >= 16 && b <= 31) return true
+    if (a === 192 && b === 168) return true
+    return false
   }
 }
 
