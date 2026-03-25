@@ -102,6 +102,35 @@ describe('Snapshot Manager', () => {
     expect(playlist?.items.length).to.be.greaterThan(0)
   })
 
+  it('should treat a successful empty snapshot as a valid empty playback state', async () => {
+    const { getHttpClient } = require('../../../src/main/services/network/http-client')
+    const httpClient = getHttpClient()
+    sandbox.stub(httpClient, 'getResponse').resolves({
+      status: 200,
+      data: {
+        device_id: 'device-123',
+        publish: null,
+        snapshot: null,
+        media_urls: undefined,
+        emergency: null,
+        default_media: null,
+        default_media_resolution: {
+          source: 'NONE',
+          aspect_ratio: '16:9',
+        },
+      },
+    })
+
+    const { getSnapshotManager } = require('../../../src/main/services/snapshot-manager')
+    const snapshotManager = getSnapshotManager()
+
+    const playlist = await snapshotManager.refreshSnapshot()
+
+    expect(playlist?.mode).to.equal('empty')
+    expect(playlist?.items).to.deep.equal([])
+    expect(snapshotManager.getLastError()).to.equal(undefined)
+  })
+
   it('should locally switch from default fallback to an active schedule window when the boundary is reached', async () => {
     const baseTime = new Date('2026-03-14T09:00:00.000Z')
     clock = sandbox.useFakeTimers({ now: baseTime, shouldAdvanceTime: false })
@@ -265,5 +294,29 @@ describe('Snapshot Manager', () => {
     expect(playlist?.items[0]?.type).to.equal('scene')
     expect(playlist?.items[0]?.mediaId).to.equal('media-left')
     expect((playlist?.items[0]?.meta as any)?.scene?.slots).to.have.length(2)
+  })
+
+  it('should clear identity-bound cached snapshot state during hard reset', async () => {
+    const snapshotFile = path.join(cacheDir, 'last-snapshot.json')
+    fs.writeFileSync(
+      snapshotFile,
+      JSON.stringify({
+        snapshot_id: 'snap-clear',
+        schedule: {
+          id: 'sched-clear',
+          items: [],
+        },
+      }),
+    )
+
+    const { getSnapshotManager } = require('../../../src/main/services/snapshot-manager')
+    const snapshotManager = getSnapshotManager()
+
+    expect(fs.existsSync(snapshotFile)).to.equal(true)
+
+    snapshotManager.clearIdentityBoundState()
+
+    expect(fs.existsSync(snapshotFile)).to.equal(false)
+    expect(snapshotManager.getCurrentPlaylist()?.mode).to.equal('empty')
   })
 })

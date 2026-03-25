@@ -258,6 +258,13 @@ export class PlayerFlow extends EventEmitter {
     }
   }
 
+  private clearIdentityBoundRuntimeState(): void {
+    getPlaybackEngine().stop()
+    this.playbackReady = false
+    getSnapshotManager().clearIdentityBoundState()
+    getDefaultMediaService().clearIdentityBoundState()
+  }
+
   private handlePlaylistUpdate(playlist: PlaybackPlaylist): void {
     if (requiresTimelinePlayback(playlist)) {
       if (!this.playbackReady) {
@@ -271,7 +278,7 @@ export class PlayerFlow extends EventEmitter {
 
     this.updateStatus({
       mode: playlist.mode,
-      online: playlist.mode !== 'offline' && playlist.mode !== 'empty',
+      online: playlist.mode !== 'offline',
       scheduleId: playlist.scheduleId,
       currentMediaId: requiresTimelinePlayback(playlist) ? this.status.currentMediaId : undefined,
       lastSnapshotAt: playlist.lastSnapshotAt,
@@ -410,6 +417,7 @@ export class PlayerFlow extends EventEmitter {
     this.stopBootstrapRetryTimer()
     this.stopPairingTimers()
     this.stopRuntimeLoops(false)
+    this.clearIdentityBoundRuntimeState()
 
     await this.store.update({
       lifecycleState: 'HARD_RECOVERY',
@@ -418,6 +426,7 @@ export class PlayerFlow extends EventEmitter {
     })
 
     await this.transitionState('HARD_RECOVERY', {
+      online: false,
       backendAvailable: true,
       awaitingManualRecovery: false,
       error: reason,
@@ -531,9 +540,16 @@ export class PlayerFlow extends EventEmitter {
 
       if (activePairing?.mode === 'RECOVERY' && activePairing.confirmed) {
         if (!this.store.getState().pairingCode) {
+          logger.error(
+            {
+              activePairingId: activePairing.id,
+              expiresAt: activePairing.expires_at,
+            },
+            'Recovery pairing is confirmed but backend status did not return pairing_code'
+          )
           await this.transitionState('RECOVERY_REQUIRED', {
-            error: 'Recovery pairing is confirmed but pairing code is not available yet.',
-            recoveryReason: 'Recovery pairing is confirmed but pairing code is not available yet.',
+            error: 'Recovery confirmed, but backend did not return the recovery code yet.',
+            recoveryReason: 'Recovery confirmed, but backend did not return the recovery code yet.',
           })
           this.schedulePairingStatusPoll(PAIRING_POLL_INTERVAL_MS)
           return

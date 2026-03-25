@@ -71,6 +71,26 @@ export class DefaultMediaService extends EventEmitter {
     return this.current
   }
 
+  clearIdentityBoundState(): void {
+    const hadMedia = Boolean(this.current.media_id)
+    this.current = { source: 'NONE', aspect_ratio: null, media_id: null, media: null }
+
+    if (fs.existsSync(this.cachePath)) {
+      try {
+        fs.unlinkSync(this.cachePath)
+      } catch (error) {
+        logger.warn({ error, cachePath: this.cachePath }, 'Failed to remove cached default media metadata')
+      }
+    }
+
+    if (hadMedia) {
+      this.emit('changed', this.current)
+      if (this.mainWindow) {
+        this.mainWindow.webContents.send('default-media:changed', this.current)
+      }
+    }
+  }
+
   async getDefaultMedia(options: { refresh?: boolean } = {}): Promise<DefaultMediaResponse> {
     if (options.refresh !== false) {
       await this.refreshNow('manual')

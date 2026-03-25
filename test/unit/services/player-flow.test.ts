@@ -358,6 +358,67 @@ describe('Player Flow', () => {
     await playerFlow.stop()
   })
 
+  it('should stay in RECOVERY_REQUIRED with a clear reason when confirmed recovery status omits pairing_code', async () => {
+    const { DeviceApiError } = require('../../../src/common/types')
+    const { getPlayerFlow } = require('../../../src/main/services/player-flow')
+    const { getDeviceStateStore } = require('../../../src/main/services/device-state-store')
+    const { getPairingService } = require('../../../src/main/services/pairing-service')
+    const { getLifecycleEvents } = require('../../../src/main/services/lifecycle-events')
+
+    const stateStore = getDeviceStateStore()
+    await stateStore.clearIdentity()
+    await stateStore.update({
+      deviceId: '11111111-1111-4111-8111-111111111111',
+      fingerprint: 'fingerprint-1',
+    })
+
+    const pairingService = getPairingService()
+    sandbox.stub(pairingService, 'getStoredIdentityHealth').returns({ health: 'complete', issues: [] })
+    sandbox.stub(pairingService, 'hasTrustworthyDeviceId').returns(true)
+    sandbox.stub(pairingService, 'fetchPairingStatus').resolves({
+      device_id: '11111111-1111-4111-8111-111111111111',
+      screen: {
+        id: '11111111-1111-4111-8111-111111111111',
+        status: 'OFFLINE',
+      },
+      active_pairing: {
+        id: 'pairing-1',
+        mode: 'RECOVERY',
+        confirmed: true,
+        expires_at: new Date(Date.now() + 60000).toISOString(),
+      },
+    })
+    const submitPairingStub = sandbox.stub(pairingService, 'submitPairing').resolves({
+      success: true,
+      device_id: '11111111-1111-4111-8111-111111111111',
+      certificate: 'cert',
+      ca_certificate: 'ca',
+      fingerprint: 'fingerprint-2',
+    })
+
+    createCompleteBootstrapStubs()
+    const playerFlow = getPlayerFlow()
+    await playerFlow.start()
+
+    getLifecycleEvents().emitRuntimeAuthFailure({
+      source: 'heartbeat',
+      error: new DeviceApiError({
+        code: 'FORBIDDEN',
+        status: 403,
+        message: 'Invalid device credentials',
+      }),
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(submitPairingStub.called).to.equal(false)
+    expect(playerFlow.getState()).to.equal('RECOVERY_REQUIRED')
+    expect(playerFlow.getStatus().recoveryReason).to.equal(
+      'Recovery confirmed, but backend did not return the recovery code yet.'
+    )
+    await playerFlow.stop()
+  })
+
   it('should complete fresh pairing when active_pairing mode is PAIRING', async () => {
     const { getPlayerFlow } = require('../../../src/main/services/player-flow')
     const { getDeviceStateStore } = require('../../../src/main/services/device-state-store')

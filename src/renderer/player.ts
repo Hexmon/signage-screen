@@ -630,7 +630,10 @@ class Player {
       } else if (status.mode === 'default') {
         this.modeBanner.textContent = 'DEFAULT MEDIA'
         this.modeBanner.classList.add('default')
-      } else if (status.mode === 'offline' || status.mode === 'empty') {
+      } else if (status.mode === 'empty') {
+        this.modeBanner.textContent = 'NO CONTENT ASSIGNED'
+        this.modeBanner.classList.add('default')
+      } else if (status.mode === 'offline') {
         this.modeBanner.textContent = 'OFFLINE MODE'
         this.modeBanner.classList.add('offline')
       } else {

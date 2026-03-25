@@ -177,4 +177,36 @@ describe('Default Media Service', () => {
     expect(result.source).to.equal('NONE')
     expect(result.media_id).to.equal(null)
   })
+
+  it('clears cached default media metadata during identity reset', async () => {
+    const cacheDir = path.join(tempDir, 'cache')
+    fs.mkdirSync(cacheDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(cacheDir, 'default-media.json'),
+      JSON.stringify({
+        source: 'SCREEN',
+        aspect_ratio: '16:9',
+        media_id: 'media-clear',
+        media: {
+          id: 'media-clear',
+          name: 'Clear Me',
+          type: 'IMAGE',
+          media_url: 'https://cdn.example.com/clear.png',
+          source_content_type: 'image/png',
+        },
+      })
+    )
+
+    const { DefaultMediaService } = require('../../../src/main/services/settings/default-media-service.ts')
+    const service = new DefaultMediaService()
+
+    await flushAsync()
+    expect(service.getCurrent().media_id).to.equal('media-clear')
+
+    service.clearIdentityBoundState()
+
+    expect(service.getCurrent().media_id).to.equal(null)
+    expect(service.getCurrent().source).to.equal('NONE')
+    expect(fs.existsSync(path.join(cacheDir, 'default-media.json'))).to.equal(false)
+  })
 })

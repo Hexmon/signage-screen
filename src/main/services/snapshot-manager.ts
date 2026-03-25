@@ -103,6 +103,32 @@ export class SnapshotManager extends EventEmitter {
     return this.lastError
   }
 
+  clearIdentityBoundState(): void {
+    if (this.evaluationTimer) {
+      clearTimeout(this.evaluationTimer)
+      this.evaluationTimer = undefined
+    }
+
+    this.currentSnapshot = undefined
+    this.lastError = undefined
+
+    if (fs.existsSync(this.snapshotPath)) {
+      try {
+        fs.unlinkSync(this.snapshotPath)
+      } catch (error) {
+        logger.warn({ error, snapshotPath: this.snapshotPath }, 'Failed to remove cached snapshot metadata')
+      }
+    }
+
+    const playlist: PlaybackPlaylist = {
+      mode: 'empty',
+      items: [],
+    }
+
+    this.currentPlaylist = playlist
+    this.emit('playlist-updated', playlist)
+  }
+
   async refreshSnapshot(retryOnExpired: boolean = true): Promise<PlaybackPlaylist | null> {
     const pairingService = getPairingService()
     const deviceId = pairingService.getDeviceId()
@@ -224,7 +250,7 @@ export class SnapshotManager extends EventEmitter {
     }
   }
 
-  private async buildPlaylist(snapshot: NormalizedSnapshot, fallbackMode: PlaybackMode): Promise<PlaybackPlaylist> {
+  private async buildPlaylist(snapshot: NormalizedSnapshot, _fallbackMode: PlaybackMode): Promise<PlaybackPlaylist> {
     let mode: PlaybackMode = 'normal'
     let items: TimelineItem[] = []
     let nextTransitionAt: number | undefined
@@ -252,7 +278,7 @@ export class SnapshotManager extends EventEmitter {
         mode = 'default'
         items = await this.attachLocalMedia([snapshot.defaultItem])
       } else {
-        mode = fallbackMode
+        mode = 'empty'
         items = []
       }
     } else if (snapshot.items.length > 0) {
@@ -262,7 +288,7 @@ export class SnapshotManager extends EventEmitter {
       mode = 'default'
       items = await this.attachLocalMedia([snapshot.defaultItem])
     } else {
-      mode = fallbackMode
+      mode = 'empty'
       items = []
     }
 
@@ -458,13 +484,20 @@ export class SnapshotManager extends EventEmitter {
 
     if (this.currentSnapshot) {
       const playlist = await this.buildPlaylist(this.currentSnapshot, 'offline')
-      this.currentPlaylist = playlist
-      this.emit('playlist-updated', playlist)
-      return playlist
+      const effectivePlaylist =
+        playlist.mode === 'empty'
+          ? {
+              ...playlist,
+              mode: 'offline' as PlaybackMode,
+            }
+          : playlist
+      this.currentPlaylist = effectivePlaylist
+      this.emit('playlist-updated', effectivePlaylist)
+      return effectivePlaylist
     }
 
     const playlist: PlaybackPlaylist = {
-      mode: 'empty',
+      mode: 'offline',
       items: [],
       lastSnapshotAt: this.currentPlaylist?.lastSnapshotAt,
     }
