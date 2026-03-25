@@ -92,6 +92,13 @@ export class PlaybackEngine extends EventEmitter {
     this.state = 'stopped'
     this.currentItem = undefined
 
+    if (this.mainWindow) {
+      this.mainWindow.webContents.send('playback-update', {
+        type: 'clear-active',
+        reason: 'timeline-stopped',
+      })
+    }
+
     this.emit('playback-stopped')
   }
 

@@ -563,6 +563,17 @@ describe('Player Flow', () => {
     const stubs = createCompleteBootstrapStubs()
     stubs.snapshotManager.refreshSnapshot.resolves({ mode: 'default', items: [], scheduleId: undefined })
     const playbackStopStub = sandbox.stub(stubs.playbackEngine, 'stop').returns()
+    sandbox.stub(stubs.defaultMediaService, 'getCurrent').returns({
+      source: 'GLOBAL',
+      aspect_ratio: null,
+      media_id: 'media-default',
+      media: {
+        id: 'media-default',
+        name: 'Lobby Fallback',
+        type: 'IMAGE',
+        media_url: 'https://cdn.example.com/default.png',
+      },
+    })
 
     const playerFlow = getPlayerFlow()
     await playerFlow.start()
@@ -587,5 +598,80 @@ describe('Player Flow', () => {
     expect(stubs.playbackEngine.start.called).to.equal(false)
 
     await playerFlow.stop()
+  })
+
+  it('switches idle playback into default mode when resolved default media appears', async () => {
+    const { getPlayerFlow } = require('../../../src/main/services/player-flow')
+    const { getSnapshotManager } = require('../../../src/main/services/snapshot-manager')
+    const { getDefaultMediaService } = require('../../../src/main/services/settings/default-media-service')
+
+    const snapshotManager = getSnapshotManager()
+    const defaultMediaService = getDefaultMediaService()
+    const playerFlow = getPlayerFlow()
+
+    sandbox.stub(snapshotManager, 'getCurrentPlaylist').returns({
+      mode: 'empty',
+      items: [],
+      scheduleId: 'sched-default',
+    })
+    sandbox.stub(defaultMediaService, 'getCurrent').returns({
+      source: 'GLOBAL',
+      aspect_ratio: null,
+      media_id: 'media-default',
+      media: {
+        id: 'media-default',
+        name: 'Lobby Fallback',
+        type: 'IMAGE',
+        media_url: 'https://cdn.example.com/default.png',
+      },
+    })
+
+    playerFlow['state'] = 'PAIRED_RUNTIME'
+    playerFlow['status'] = {
+      ...playerFlow.getStatus(),
+      state: 'PAIRED_RUNTIME',
+      mode: 'empty',
+      online: true,
+    }
+
+    playerFlow['refreshPlaybackStatusFromCurrentState']()
+
+    expect(playerFlow.getStatus().mode).to.equal('default')
+    expect(playerFlow.getStatus().scheduleId).to.equal('sched-default')
+  })
+
+  it('clears fallback mode when resolved default media is removed and no schedule is active', async () => {
+    const { getPlayerFlow } = require('../../../src/main/services/player-flow')
+    const { getSnapshotManager } = require('../../../src/main/services/snapshot-manager')
+    const { getDefaultMediaService } = require('../../../src/main/services/settings/default-media-service')
+
+    const snapshotManager = getSnapshotManager()
+    const defaultMediaService = getDefaultMediaService()
+    const playerFlow = getPlayerFlow()
+
+    sandbox.stub(snapshotManager, 'getCurrentPlaylist').returns({
+      mode: 'default',
+      items: [],
+      scheduleId: 'sched-cleared',
+    })
+    sandbox.stub(defaultMediaService, 'getCurrent').returns({
+      source: 'NONE',
+      aspect_ratio: null,
+      media_id: null,
+      media: null,
+    })
+
+    playerFlow['state'] = 'PAIRED_RUNTIME'
+    playerFlow['status'] = {
+      ...playerFlow.getStatus(),
+      state: 'PAIRED_RUNTIME',
+      mode: 'default',
+      online: true,
+    }
+
+    playerFlow['refreshPlaybackStatusFromCurrentState']()
+
+    expect(playerFlow.getStatus().mode).to.equal('empty')
+    expect(playerFlow.getStatus().currentMediaId).to.equal(undefined)
   })
 })

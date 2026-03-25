@@ -326,12 +326,24 @@ export class CommandProcessor {
     }
   }
 
+  private shouldSkipRateLimit(commandType: CommandType): boolean {
+    return commandType === 'REFRESH' || commandType === 'REFRESH_SCHEDULE'
+  }
+
   private isRateLimited(commandType: CommandType): boolean {
+    if (this.shouldSkipRateLimit(commandType)) {
+      return false
+    }
+
     const lastExecution = this.rateLimitMap.get(commandType)
     return lastExecution !== undefined && Date.now() - lastExecution < this.rateLimitWindowMs
   }
 
   private updateRateLimit(commandType: CommandType): void {
+    if (this.shouldSkipRateLimit(commandType)) {
+      return
+    }
+
     this.rateLimitMap.set(commandType, Date.now())
   }
 

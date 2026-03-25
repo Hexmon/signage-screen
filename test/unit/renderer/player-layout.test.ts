@@ -1,4 +1,5 @@
 const { expect } = require('chai')
+const sinon = require('sinon')
 
 describe('Player layout helpers', () => {
   it('computes a centered letterboxed frame for 16:9 content on a tall viewport', async () => {
@@ -61,5 +62,81 @@ describe('Player layout helpers', () => {
         transitionDurationMs: 0,
       }),
     ).to.equal(false)
+  })
+
+  it('clears scheduled playback when player falls back to default or has no active scheduled item', async () => {
+    const { shouldClearScheduledPlayback } = await import('../../../src/renderer/player.ts')
+
+    expect(
+      shouldClearScheduledPlayback({
+        state: 'PAIRED_RUNTIME',
+        mode: 'default',
+        online: true,
+      }),
+    ).to.equal(true)
+
+    expect(
+      shouldClearScheduledPlayback({
+        state: 'PAIRED_RUNTIME',
+        mode: 'empty',
+        online: true,
+      }),
+    ).to.equal(true)
+
+    expect(
+      shouldClearScheduledPlayback({
+        state: 'PAIRED_RUNTIME',
+        mode: 'normal',
+        online: true,
+      }),
+    ).to.equal(true)
+
+    expect(
+      shouldClearScheduledPlayback({
+        state: 'PAIRED_RUNTIME',
+        mode: 'normal',
+        online: true,
+        currentMediaId: 'media-1',
+      }),
+    ).to.equal(false)
+  })
+
+  it('recursively tears down scheduled media trees', async () => {
+    const { teardownScheduledElementTree } = await import('../../../src/renderer/player.ts')
+
+    const videoParent = { removeChild: sinon.spy() }
+    const iframeParent = { removeChild: sinon.spy() }
+    const rootParent = { removeChild: sinon.spy() }
+
+    const videoNode = {
+      pause: sinon.spy(),
+      removeAttribute: sinon.spy(),
+      load: sinon.spy(),
+      parentElement: videoParent,
+    }
+
+    const iframeNode = {
+      removeAttribute: sinon.spy(),
+      parentElement: iframeParent,
+      src: 'https://example.com/embed',
+    }
+
+    const rootNode = {
+      querySelectorAll: sinon.stub().returns([videoNode, iframeNode]),
+      parentElement: rootParent,
+    }
+
+    teardownScheduledElementTree(rootNode)
+
+    expect(videoNode.pause.calledOnce).to.equal(true)
+    expect(videoNode.removeAttribute.calledWith('src')).to.equal(true)
+    expect(videoNode.load.calledOnce).to.equal(true)
+    expect(videoParent.removeChild.calledWith(videoNode)).to.equal(true)
+
+    expect(iframeNode.removeAttribute.calledWith('src')).to.equal(true)
+    expect(iframeNode.src).to.equal('')
+    expect(iframeParent.removeChild.calledWith(iframeNode)).to.equal(true)
+
+    expect(rootParent.removeChild.calledWith(rootNode)).to.equal(true)
   })
 })

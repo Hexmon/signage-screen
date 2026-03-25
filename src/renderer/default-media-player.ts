@@ -13,6 +13,77 @@ export function resolveDefaultMediaSource(media: DefaultMediaItem): string {
   return media.local_url || media.media_url
 }
 
+type DisposableDefaultMediaNode = {
+  pause?: () => void
+  removeAttribute?: (name: string) => void
+  load?: () => void
+  querySelectorAll?: (selector: string) => ArrayLike<DisposableDefaultMediaNode>
+  parentElement?: { removeChild?: (child: DisposableDefaultMediaNode) => void } | null
+  remove?: () => void
+  src?: string
+}
+
+function teardownDefaultMediaNode(node: DisposableDefaultMediaNode | null | undefined): void {
+  if (!node) {
+    return
+  }
+
+  try {
+    node.pause?.()
+  } catch {
+    // ignore inert teardown failures
+  }
+
+  try {
+    node.removeAttribute?.('src')
+  } catch {
+    // ignore inert teardown failures
+  }
+
+  if (typeof node.src === 'string') {
+    try {
+      node.src = ''
+    } catch {
+      // ignore read-only src properties
+    }
+  }
+
+  try {
+    node.load?.()
+  } catch {
+    // ignore inert teardown failures
+  }
+
+  if (node.parentElement?.removeChild) {
+    try {
+      node.parentElement.removeChild(node)
+      return
+    } catch {
+      // fall back to remove()
+    }
+  }
+
+  try {
+    node.remove?.()
+  } catch {
+    // ignore inert teardown failures
+  }
+}
+
+export function teardownDefaultMediaElementTree(root: DisposableDefaultMediaNode | null | undefined): void {
+  if (!root) {
+    return
+  }
+
+  const descendants =
+    typeof root.querySelectorAll === 'function'
+      ? Array.from(root.querySelectorAll('video, audio, iframe, webview'))
+      : []
+
+  descendants.forEach((node) => teardownDefaultMediaNode(node))
+  teardownDefaultMediaNode(root)
+}
+
 export class DefaultMediaPlayer {
   private container: HTMLElement
   private content: HTMLElement
@@ -298,7 +369,7 @@ export class DefaultMediaPlayer {
 
   private clearContent(): void {
     while (this.content.firstChild) {
-      this.content.removeChild(this.content.firstChild)
+      teardownDefaultMediaElementTree(this.content.firstChild as DisposableDefaultMediaNode)
     }
   }
 

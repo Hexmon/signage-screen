@@ -1,6 +1,6 @@
 import { BrowserWindow } from 'electron'
 import { EventEmitter } from 'events'
-import { DeviceApiError, PairingCodeRequest, PairingCodeResponse, PairingResponse, PairingStatusResponse, PlayerState, PlayerStatus } from '../../common/types'
+import { DeviceApiError, PairingCodeRequest, PairingCodeResponse, PairingResponse, PairingStatusResponse, PlaybackMode, PlayerState, PlayerStatus } from '../../common/types'
 import { getLogger } from '../../common/logger'
 import { getConfigManager } from '../../common/config'
 import { ExponentialBackoff } from '../../common/utils'
@@ -36,6 +36,7 @@ export class PlayerFlow extends EventEmitter {
   private playbackReady = false
   private snapshotListenerBound = false
   private lifecycleEventsBound = false
+  private defaultMediaListenerBound = false
   private screenshotInterval?: NodeJS.Timeout
   private pairingPollTimer?: NodeJS.Timeout
   private bootstrapRetryTimer?: NodeJS.Timeout
@@ -46,6 +47,9 @@ export class PlayerFlow extends EventEmitter {
   private readonly lifecycleEvents = getLifecycleEvents()
   private readonly onRuntimeAuthFailure = (event: RuntimeAuthFailureEvent) => {
     void this.handleRuntimeAuthFailure(event)
+  }
+  private readonly onDefaultMediaChanged = () => {
+    this.refreshPlaybackStatusFromCurrentState()
   }
 
   constructor() {
@@ -70,6 +74,7 @@ export class PlayerFlow extends EventEmitter {
     getDefaultMediaService().initialize(mainWindow)
     this.bindLifecycleEvents()
     this.bindSnapshotListener()
+    this.bindDefaultMediaListener()
   }
 
   async start(): Promise<void> {
@@ -157,6 +162,7 @@ export class PlayerFlow extends EventEmitter {
     this.stopBootstrapRetryTimer()
     this.stopRuntimeLoops(false)
     this.unbindLifecycleEvents()
+    this.unbindDefaultMediaListener()
   }
 
   private bindLifecycleEvents(): void {
@@ -186,6 +192,24 @@ export class PlayerFlow extends EventEmitter {
     getSnapshotManager().on('playlist-updated', (playlist: PlaybackPlaylist) => {
       this.handlePlaylistUpdate(playlist)
     })
+  }
+
+  private bindDefaultMediaListener(): void {
+    if (this.defaultMediaListenerBound) {
+      return
+    }
+
+    getDefaultMediaService().on('changed', this.onDefaultMediaChanged)
+    this.defaultMediaListenerBound = true
+  }
+
+  private unbindDefaultMediaListener(): void {
+    if (!this.defaultMediaListenerBound) {
+      return
+    }
+
+    getDefaultMediaService().off('changed', this.onDefaultMediaChanged)
+    this.defaultMediaListenerBound = false
   }
 
   private async restoreCachedPlayback(): Promise<void> {
@@ -265,6 +289,35 @@ export class PlayerFlow extends EventEmitter {
     getDefaultMediaService().clearIdentityBoundState()
   }
 
+  private resolveVisiblePlaybackMode(playlist: PlaybackPlaylist): PlaybackMode {
+    if (requiresTimelinePlayback(playlist)) {
+      return playlist.mode
+    }
+
+    if (playlist.mode === 'offline') {
+      return 'offline'
+    }
+
+    return getDefaultMediaService().getCurrent().media_id ? 'default' : 'empty'
+  }
+
+  private refreshPlaybackStatusFromCurrentState(): void {
+    const playlist = getSnapshotManager().getCurrentPlaylist()
+    if (playlist) {
+      this.handlePlaylistUpdate(playlist)
+      return
+    }
+
+    if (this.state !== 'PAIRED_RUNTIME' && this.state !== 'BOOTSTRAP_AUTH') {
+      return
+    }
+
+    this.updateStatus({
+      mode: getDefaultMediaService().getCurrent().media_id ? 'default' : 'empty',
+      currentMediaId: undefined,
+    })
+  }
+
   private handlePlaylistUpdate(playlist: PlaybackPlaylist): void {
     if (requiresTimelinePlayback(playlist)) {
       if (!this.playbackReady) {
@@ -277,7 +330,7 @@ export class PlayerFlow extends EventEmitter {
     }
 
     this.updateStatus({
-      mode: playlist.mode,
+      mode: this.resolveVisiblePlaybackMode(playlist),
       online: playlist.mode !== 'offline',
       scheduleId: playlist.scheduleId,
       currentMediaId: requiresTimelinePlayback(playlist) ? this.status.currentMediaId : undefined,

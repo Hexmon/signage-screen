@@ -111,6 +111,18 @@ describe('Config Manager', () => {
       expect(config.intervals).to.exist
       expect(config.runtime.mode).to.exist
     })
+
+    it('should migrate the legacy 30-second command poll interval to 5 seconds', () => {
+      delete require.cache[require.resolve('../../../src/common/config')]
+      const { getConfigManager } = require('../../../src/common/config')
+
+      const configManager = getConfigManager()
+      const config = configManager.getConfig()
+      const diskConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+
+      expect(config.intervals.commandPollMs).to.equal(5000)
+      expect(diskConfig.intervals.commandPollMs).to.equal(5000)
+    })
   })
 
   describe('Configuration Validation', () => {

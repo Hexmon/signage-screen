@@ -86,6 +86,85 @@ export function shouldUseManualVideoReplay(item: TimelineItem): boolean {
   return item.type === 'video' && item.loop === true
 }
 
+type DisposableMediaNode = {
+  pause?: () => void
+  removeAttribute?: (name: string) => void
+  load?: () => void
+  querySelectorAll?: (selector: string) => ArrayLike<DisposableMediaNode>
+  parentElement?: { removeChild?: (child: DisposableMediaNode) => void } | null
+  remove?: () => void
+  src?: string
+}
+
+export function shouldClearScheduledPlayback(status: PlayerStatus): boolean {
+  if (status.mode === 'default' || status.mode === 'empty' || status.mode === 'offline') {
+    return true
+  }
+
+  return status.mode === 'normal' && !status.currentMediaId
+}
+
+function teardownDisposableNode(node: DisposableMediaNode | null | undefined): void {
+  if (!node) {
+    return
+  }
+
+  try {
+    node.pause?.()
+  } catch {
+    // ignore teardown errors from inert/fake nodes
+  }
+
+  try {
+    node.removeAttribute?.('src')
+  } catch {
+    // ignore teardown errors from inert/fake nodes
+  }
+
+  if (typeof node.src === 'string') {
+    try {
+      node.src = ''
+    } catch {
+      // ignore read-only src properties
+    }
+  }
+
+  try {
+    node.load?.()
+  } catch {
+    // ignore teardown errors from inert/fake nodes
+  }
+
+  if (node.parentElement?.removeChild) {
+    try {
+      node.parentElement.removeChild(node)
+      return
+    } catch {
+      // fall back to remove()
+    }
+  }
+
+  try {
+    node.remove?.()
+  } catch {
+    // ignore teardown errors from inert/fake nodes
+  }
+}
+
+export function teardownScheduledElementTree(root: DisposableMediaNode | null | undefined): void {
+  if (!root) {
+    return
+  }
+
+  const descendants =
+    typeof root.querySelectorAll === 'function'
+      ? Array.from(root.querySelectorAll('video, audio, iframe, webview'))
+      : []
+
+  descendants.forEach((node) => teardownDisposableNode(node))
+  teardownDisposableNode(root)
+}
+
 class Player {
   private canvas: HTMLCanvasElement | null = null
   private currentElement?: HTMLElement
@@ -98,6 +177,7 @@ class Player {
   private statusSnapshot: HTMLElement | null = null
   private modeBanner: HTMLElement | null = null
   private currentCleanup?: () => void
+  private playbackSession = 0
 
   constructor() {
     this.initializeElements()
@@ -187,6 +267,9 @@ class Player {
         if (data.type === 'transition-start') {
           this.log('debug', 'Received transition-start event', data)
           this.startTransition(data.current, data.next, data.durationMs)
+        } else if (data.type === 'clear-active') {
+          this.log('debug', 'Received clear-active event', data)
+          this.clearScheduledPlayback(data.reason || 'clear-active')
         } else if (data.type === 'show-fallback') {
           this.log('warn', 'Received show-fallback event', data)
           this.showFallback(data.message)
@@ -236,6 +319,10 @@ class Player {
   }
 
   private updateContentSource(status: PlayerStatus): void {
+    if (shouldClearScheduledPlayback(status)) {
+      this.clearScheduledPlayback(`status:${status.mode}`)
+    }
+
     this.setActiveSource(resolvePlayerContentSource(status))
   }
 
@@ -257,6 +344,7 @@ class Player {
    * Play media item
    */
   private async playMedia(item: TimelineItem): Promise<void> {
+    const sessionId = ++this.playbackSession
     this.log('info', 'Playing media', { itemId: item.id, type: item.type })
 
     try {
@@ -267,6 +355,10 @@ class Player {
         }
 
         const element = this.renderScene(item, scene)
+        if (sessionId !== this.playbackSession) {
+          this.disposeScheduledElement(element)
+          return
+        }
         this.showElement(element)
         this.currentElement = element
         return
@@ -310,6 +402,11 @@ class Player {
 
       // Apply fit mode
       this.applyFitMode(element, item.fit)
+
+      if (sessionId !== this.playbackSession) {
+        this.disposeScheduledElement(element)
+        return
+      }
 
       // Show element
       this.showElement(element)
@@ -539,12 +636,7 @@ class Player {
       this.currentElement.style.opacity = '0'
       setTimeout(() => {
         if (this.mediaContainer && previous.parentElement === this.mediaContainer) {
-          if (previous instanceof HTMLVideoElement) {
-            previous.pause()
-            previous.removeAttribute('src')
-            previous.load()
-          }
-          this.mediaContainer.removeChild(previous)
+          this.disposeScheduledElement(previous)
         }
       }, 500)
     }
@@ -782,6 +874,10 @@ class Player {
         })
 
         const nextElement = await renderIntoSlot(item)
+        if (disposed) {
+          this.disposeScheduledElement(nextElement)
+          return
+        }
         this.applyFitMode(nextElement, item.fit)
         nextElement.style.opacity = '0'
         nextElement.style.transition = 'opacity 300ms ease-in-out'
@@ -794,16 +890,13 @@ class Player {
         if (activeElement && activeElement.parentElement === container) {
           const previous = activeElement
           previous.style.opacity = '0'
-          window.setTimeout(() => {
+          const fadeTimer = window.setTimeout(() => {
+            timers.delete(fadeTimer)
             if (previous.parentElement === container) {
-              if (previous instanceof HTMLVideoElement) {
-                previous.pause()
-                previous.removeAttribute('src')
-                previous.load()
-              }
-              container.removeChild(previous)
+              this.disposeScheduledElement(previous)
             }
           }, 300)
+          timers.add(fadeTimer)
         }
 
         activeElement = nextElement
@@ -838,16 +931,33 @@ class Player {
       timers.forEach((timer) => window.clearTimeout(timer))
       timers.clear()
 
-      if (activeElement instanceof HTMLVideoElement) {
-        activeElement.pause()
-        activeElement.removeAttribute('src')
-        activeElement.load()
+      if (activeElement) {
+        this.disposeScheduledElement(activeElement)
+        activeElement = undefined
       }
 
       while (container.firstChild) {
-        container.removeChild(container.firstChild)
+        this.disposeScheduledElement(container.firstChild as HTMLElement)
       }
     }
+  }
+
+  private disposeScheduledElement(element: HTMLElement | null | undefined): void {
+    teardownScheduledElementTree(element as DisposableMediaNode | null | undefined)
+  }
+
+  private clearScheduledPlayback(reason: string): void {
+    this.playbackSession += 1
+    this.runCurrentCleanup()
+
+    if (this.mediaContainer) {
+      while (this.mediaContainer.firstChild) {
+        this.disposeScheduledElement(this.mediaContainer.firstChild as HTMLElement)
+      }
+    }
+
+    this.currentElement = undefined
+    this.log('debug', 'Cleared scheduled playback', { reason })
   }
 
   private runCurrentCleanup(): void {

@@ -10,6 +10,8 @@ import type { AppConfig, RuntimeMode } from './types'
 import type { App as ElectronApp } from 'electron'
 
 const RUNTIME_MODES: RuntimeMode[] = ['dev', 'qa', 'production']
+const LEGACY_COMMAND_POLL_MS = 30000
+const LIVE_COMMAND_POLL_MS = 5000
 
 export class ConfigManager {
   private config: AppConfig
@@ -152,16 +154,20 @@ export class ConfigManager {
 
   private loadConfig(): AppConfig {
     const fileConfig = this.readConfigFromDisk()
-    const merged = this.normalizeConfig(this.mergeConfig(this.defaults, fileConfig || {}))
+    const merged = this.mergeConfig(this.defaults, fileConfig || {})
+    const normalized = this.normalizeConfig(merged)
 
     if (!fileConfig) {
-      this.config = merged
+      this.config = normalized
       this.saveConfig()
-      return merged
+      return normalized
     }
 
-    this.config = merged
-    return merged
+    this.config = normalized
+    if (merged.intervals.commandPollMs !== normalized.intervals.commandPollMs) {
+      this.saveConfig()
+    }
+    return normalized
   }
 
   private readConfigFromDisk(): Partial<AppConfig> | null {
@@ -195,6 +201,10 @@ export class ConfigManager {
     const apiBase = this.normalizeUrl(config.apiBase) || this.buildDefaultApiBase()
     const wsUrl = this.normalizeUrl(config.wsUrl) || this.buildDefaultWsUrl(apiBase)
     const runtimeMode = this.getRuntimeModeOverride() || config.runtime.mode
+    const commandPollMs =
+      config.intervals.commandPollMs === LEGACY_COMMAND_POLL_MS
+        ? LIVE_COMMAND_POLL_MS
+        : config.intervals.commandPollMs
 
     return {
       ...config,
@@ -203,6 +213,10 @@ export class ConfigManager {
       runtime: {
         ...config.runtime,
         mode: runtimeMode,
+      },
+      intervals: {
+        ...config.intervals,
+        commandPollMs,
       },
     }
   }

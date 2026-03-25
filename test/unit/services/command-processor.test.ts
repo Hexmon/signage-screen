@@ -102,6 +102,50 @@ describe('Command Processor', () => {
     expect(defaultRefreshStub.calledOnceWithExactly('refresh-command')).to.be.true
   })
 
+  it('should process consecutive refresh commands without rate limiting default media updates', async () => {
+    const { resetDeviceStateStore, getDeviceStateStore } = require('../../../src/main/services/device-state-store')
+    resetDeviceStateStore()
+    await getDeviceStateStore().clearIdentity()
+
+    const { getCommandProcessor } = require('../../../src/main/services/command-processor')
+    const { getSnapshotManager } = require('../../../src/main/services/snapshot-manager')
+    const { getHttpClient } = require('../../../src/main/services/network/http-client')
+    const { getDefaultMediaService } = require('../../../src/main/services/settings/default-media-service')
+
+    const commandProcessor = getCommandProcessor()
+    const snapshotManager = getSnapshotManager()
+    const httpClient = getHttpClient()
+    const defaultMediaService = getDefaultMediaService()
+
+    const refreshStub = sandbox.stub(snapshotManager, 'refreshSnapshot').resolves({ mode: 'empty', items: [], scheduleId: undefined })
+    const defaultRefreshStub = sandbox.stub(defaultMediaService, 'refreshNow').resolves({
+      source: 'NONE',
+      aspect_ratio: null,
+      media_id: null,
+      media: null,
+    })
+    sandbox.stub(httpClient, 'post').resolves({ success: true, timestamp: new Date().toISOString() })
+
+    await commandProcessor.ingestCommands(
+      [
+        {
+          id: 'cmd-refresh-1',
+          type: 'REFRESH',
+          payload: { reason: 'DEFAULT_MEDIA' },
+        },
+        {
+          id: 'cmd-refresh-2',
+          type: 'REFRESH',
+          payload: { reason: 'DEFAULT_MEDIA' },
+        },
+      ],
+      'poll'
+    )
+
+    expect(refreshStub.callCount).to.equal(2)
+    expect(defaultRefreshStub.callCount).to.equal(2)
+  })
+
   it('should persist recent command ledger entries for restart safety', async () => {
     const { resetDeviceStateStore, getDeviceStateStore } = require('../../../src/main/services/device-state-store')
     resetDeviceStateStore()

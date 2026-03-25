@@ -194,8 +194,8 @@ describe('Snapshot Manager', () => {
     await clock.tickAsync(0)
 
     const initialPlaylist = snapshotManager.getCurrentPlaylist()
-    expect(initialPlaylist?.mode).to.equal('normal')
-    expect(initialPlaylist?.items).to.deep.equal([])
+    expect(initialPlaylist?.mode).to.equal('default')
+    expect(initialPlaylist?.items.map((item: any) => item.mediaId)).to.deep.equal(['media-default'])
 
     await clock.tickAsync(1000)
 
@@ -203,6 +203,12 @@ describe('Snapshot Manager', () => {
     expect(transitionedPlaylist?.mode).to.equal('normal')
     expect(transitionedPlaylist?.items[0]?.type).to.equal('video')
     expect(transitionedPlaylist?.items.map((item: any) => item.mediaId)).to.deep.equal(['media-1'])
+
+    await clock.tickAsync(9 * 60 * 1000 + 59 * 1000)
+
+    const postWindowPlaylist = snapshotManager.getCurrentPlaylist()
+    expect(postWindowPlaylist?.mode).to.equal('default')
+    expect(postWindowPlaylist?.items.map((item: any) => item.mediaId)).to.deep.equal(['media-default'])
   })
 
   it('should synthesize a layout scene for slot-based active schedule windows', async () => {
