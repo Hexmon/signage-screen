@@ -261,7 +261,7 @@ async function initializeServices(): Promise<void> {
 
     await logBackendConnectivity()
 
-    const { getPlayerFlow } = await import('./services/player-flow')
+    const { getPlayerFlow } = await import('./services/player-flow.js')
     const playerFlow = getPlayerFlow()
 
     if (mainWindow) {
@@ -302,7 +302,7 @@ async function logBackendConnectivity(): Promise<void> {
     logger.warn({ error, apiBase: appConfig.apiBase }, 'Failed to parse backend URL')
   }
 
-  const { getHttpClient } = await import('./services/network/http-client')
+  const { getHttpClient } = await import('./services/network/http-client.js')
   const httpClient = getHttpClient()
   const result = await httpClient.checkConnectivityDetailed()
 
@@ -365,40 +365,40 @@ function setupIPCHandlers(): void {
 
   // Pairing
   ipcMain.handle('pairing-request', async (_event: any, payload?: any) => {
-    const { getPlayerFlow } = await import('./services/player-flow')
+    const { getPlayerFlow } = await import('./services/player-flow.js')
     return await getPlayerFlow().requestPairingCode(payload)
   })
 
   ipcMain.handle('pairing-status', async () => {
-    const { getPlayerFlow } = await import('./services/player-flow')
+    const { getPlayerFlow } = await import('./services/player-flow.js')
     return await getPlayerFlow().checkPairingStatus()
   })
 
   ipcMain.handle('pairing-complete', async (_event: any, code?: string) => {
-    const { getPlayerFlow } = await import('./services/player-flow')
+    const { getPlayerFlow } = await import('./services/player-flow.js')
     void code
     return await getPlayerFlow().completePairing()
   })
 
   // Backwards compatibility
   ipcMain.handle('submit-pairing', async (_event: any, code: string) => {
-    const { getPlayerFlow } = await import('./services/player-flow')
+    const { getPlayerFlow } = await import('./services/player-flow.js')
     void code
     return await getPlayerFlow().completePairing()
   })
 
   ipcMain.handle('get-pairing-status', async () => {
-    const { getPlayerFlow } = await import('./services/player-flow')
+    const { getPlayerFlow } = await import('./services/player-flow.js')
     return await getPlayerFlow().checkPairingStatus()
   })
 
   ipcMain.handle('request-pairing-code', async (_event: any, payload?: any) => {
-    const { getPlayerFlow } = await import('./services/player-flow')
+    const { getPlayerFlow } = await import('./services/player-flow.js')
     return await getPlayerFlow().requestPairingCode(payload)
   })
 
   ipcMain.handle('player-action', async (_event: any, action: string, payload?: any) => {
-    const { getPlayerFlow } = await import('./services/player-flow')
+    const { getPlayerFlow } = await import('./services/player-flow.js')
     if (action === 'retry-recovery' || action === 're-pair' || action === 'reset-doubtful-pairing' || action === 'refresh-pairing') {
       await getPlayerFlow().performAction(action, payload)
       return getPlayerFlow().getStatus()
@@ -407,31 +407,31 @@ function setupIPCHandlers(): void {
   })
 
   ipcMain.handle('get-player-status', async () => {
-    const { getPlayerFlow } = await import('./services/player-flow')
+    const { getPlayerFlow } = await import('./services/player-flow.js')
     return getPlayerFlow().getStatus()
   })
 
   ipcMain.handle('default-media:get', async (_event: any, options?: { refresh?: boolean }) => {
-    const { getDefaultMediaService } = await import('./services/settings/default-media-service')
+    const { getDefaultMediaService } = await import('./services/settings/default-media-service.js')
     return await getDefaultMediaService().getDefaultMedia(options)
   })
 
   ipcMain.handle('get-player-state', async () => {
-    const { getPlayerFlow } = await import('./services/player-flow')
+    const { getPlayerFlow } = await import('./services/player-flow.js')
     return getPlayerFlow().getState()
   })
 
   ipcMain.handle('get-device-info', async () => {
-    const { getPairingService } = await import('./services/pairing-service')
+    const { getPairingService } = await import('./services/pairing-service.js')
     return getPairingService().getDeviceInfo()
   })
 
   // Diagnostics
   ipcMain.handle('get-diagnostics', async () => {
-    const { getPairingService } = await import('./services/pairing-service')
-    const { getSnapshotManager } = await import('./services/snapshot-manager')
-    const { getRequestQueue } = await import('./services/network/request-queue')
-    const { getPlayerFlow } = await import('./services/player-flow')
+    const { getPairingService } = await import('./services/pairing-service.js')
+    const { getSnapshotManager } = await import('./services/snapshot-manager.js')
+    const { getRequestQueue } = await import('./services/network/request-queue.js')
+    const { getPlayerFlow } = await import('./services/player-flow.js')
 
     const pairingService = getPairingService()
     const snapshotManager = getSnapshotManager()
@@ -485,9 +485,9 @@ async function cleanup(): Promise<void> {
   logger.info('Cleaning up...')
 
   try {
-    const { getPlayerFlow } = await import('./services/player-flow')
-    const { getProofOfPlayService } = await import('./services/pop-service')
-    const { getCacheManager } = await import('./services/cache/cache-manager')
+    const { getPlayerFlow } = await import('./services/player-flow.js')
+    const { getProofOfPlayService } = await import('./services/pop-service.js')
+    const { getCacheManager } = await import('./services/cache/cache-manager.js')
 
     const playerFlow = getPlayerFlow()
     await playerFlow.stop()
