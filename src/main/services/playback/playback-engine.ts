@@ -27,6 +27,7 @@ export class PlaybackEngine extends EventEmitter {
   private mainWindow?: BrowserWindow
   private currentItem?: TimelineItem
   private currentScheduleId?: string
+  private currentTimelineFingerprint?: string
   private errorCount = 0
   private maxErrors = 5
 
@@ -91,6 +92,7 @@ export class PlaybackEngine extends EventEmitter {
     this.scheduler.stop()
     this.state = 'stopped'
     this.currentItem = undefined
+    this.currentTimelineFingerprint = undefined
 
     if (this.mainWindow) {
       this.mainWindow.webContents.send('playback-update', {
@@ -146,6 +148,7 @@ export class PlaybackEngine extends EventEmitter {
     }
 
     this.state = playlist.mode === 'emergency' ? 'emergency' : 'playing'
+    this.currentTimelineFingerprint = this.fingerprintPlaylist(playlist)
     this.scheduler.start(playlist.items)
 
     const telemetryService = getTelemetryService()
@@ -188,6 +191,12 @@ export class PlaybackEngine extends EventEmitter {
       if (!usesTimelinePlayback(playlist)) {
         logger.info({ mode: playlist.mode }, 'Playlist updated for fallback mode, stopping timeline playback')
         this.stop()
+        return
+      }
+
+      const nextFingerprint = this.fingerprintPlaylist(playlist)
+      if (this.state !== 'stopped' && this.currentTimelineFingerprint === nextFingerprint) {
+        logger.debug({ mode: playlist.mode }, 'Ignoring equivalent timeline playlist update')
         return
       }
 
@@ -337,6 +346,109 @@ export class PlaybackEngine extends EventEmitter {
    */
   getJitterStats() {
     return this.scheduler.getJitterStats()
+  }
+
+  private fingerprintPlaylist(playlist: PlaybackPlaylist): string {
+    return JSON.stringify({
+      mode: playlist.mode,
+      scheduleId: playlist.scheduleId ?? null,
+      items: playlist.items.map((item) => this.fingerprintTimelineItem(item)),
+    })
+  }
+
+  private fingerprintTimelineItem(item: TimelineItem): unknown {
+    const liveUrl = item.remoteUrl ?? item.url
+
+    return {
+      id: item.id,
+      type: item.type,
+      mediaId: item.mediaId ?? null,
+      objectKey: item.objectKey ?? null,
+      displayMs: item.displayMs,
+      fit: item.fit,
+      muted: item.muted,
+      loop: item.loop,
+      sha256: item.sha256 ?? null,
+      transitionDurationMs: item.transitionDurationMs,
+      remoteUrl: item.type === 'url'
+        ? this.normalizeComparableUrl(liveUrl, true)
+        : this.normalizeComparableUrl(liveUrl, false),
+      meta: this.normalizeComparableMeta(item.meta),
+    }
+  }
+
+  private normalizeComparableMeta(value: unknown, key?: string): unknown {
+    if (Array.isArray(value)) {
+      return value.map((entry) => this.normalizeComparableMeta(entry))
+    }
+
+    if (!value || typeof value !== 'object') {
+      if (typeof value === 'string' && key) {
+        if (key === 'source_url') {
+          return this.normalizeComparableUrl(value, true)
+        }
+
+        if (
+          key === 'media_url' ||
+          key === 'fallback_url' ||
+          key === 'fallback_media_url' ||
+          key === 'remoteUrl' ||
+          key === 'localUrl' ||
+          key === 'fallback_local_url' ||
+          key === 'url'
+        ) {
+          return this.normalizeComparableUrl(value, false)
+        }
+      }
+
+      return value
+    }
+
+    const record = value as Record<string, unknown>
+
+    if (record['type'] === 'url') {
+      return {
+        ...Object.keys(record)
+          .sort()
+          .reduce<Record<string, unknown>>((acc, currentKey) => {
+            const currentValue = record[currentKey]
+            if (currentKey === 'remoteUrl' || currentKey === 'url' || currentKey === 'source_url') {
+              acc[currentKey] =
+                typeof currentValue === 'string'
+                  ? this.normalizeComparableUrl(currentValue, true)
+                  : this.normalizeComparableMeta(currentValue, currentKey)
+              return acc
+            }
+
+            acc[currentKey] = this.normalizeComparableMeta(currentValue, currentKey)
+            return acc
+          }, {}),
+      }
+    }
+
+    return Object.keys(record)
+      .sort()
+      .reduce<Record<string, unknown>>((acc, currentKey) => {
+        acc[currentKey] = this.normalizeComparableMeta(record[currentKey], currentKey)
+        return acc
+      }, {})
+  }
+
+  private normalizeComparableUrl(value?: string, preserveQuery: boolean = false): string | null {
+    if (!value) {
+      return null
+    }
+
+    try {
+      const parsed = new URL(value)
+      parsed.hash = ''
+      if (!preserveQuery) {
+        parsed.search = ''
+      }
+      return parsed.toString()
+    } catch {
+      return value
+    }
   }
 }
 

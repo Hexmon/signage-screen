@@ -23,9 +23,11 @@ function normalizeMediaItem(input: any): DefaultMediaItem | null {
   const mediaUrl = typeof input.media_url === 'string' ? input.media_url : undefined
   const sourceUrl = typeof input.source_url === 'string' ? input.source_url : undefined
   const fallbackMediaUrl = typeof input.fallback_media_url === 'string' ? input.fallback_media_url : undefined
+  const contentType = typeof input.content_type === 'string' ? input.content_type : undefined
   const sourceContentType = typeof input.source_content_type === 'string' ? input.source_content_type : undefined
 
-  if (!id || !type || !mediaUrl) {
+  const hasPlayableWebpagePayload = type === 'WEBPAGE' && Boolean(sourceUrl || fallbackMediaUrl || mediaUrl)
+  if (!id || !type || (!mediaUrl && !hasPlayableWebpagePayload)) {
     return null
   }
 
@@ -33,6 +35,7 @@ function normalizeMediaItem(input: any): DefaultMediaItem | null {
     id,
     name,
     type,
+    content_type: contentType,
     media_url: mediaUrl,
     source_url: sourceUrl,
     fallback_media_url: fallbackMediaUrl,

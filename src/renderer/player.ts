@@ -7,6 +7,7 @@ import { DefaultMediaResponse, FitMode, LayoutScene, LayoutSceneSlot, PlayerStat
 import './types'
 import { DefaultMediaPlayer } from './default-media-player'
 import { checkMediaCompatibility, CompatResult } from '../common/media-compat'
+import { createWebpagePlaybackElement } from './webpage-playback.js'
 
 export function parseAspectRatio(aspectRatio?: string): number | null {
   if (!aspectRatio || typeof aspectRatio !== 'string') {
@@ -75,7 +76,12 @@ export function resolvePlayerContentSource(
     return 'none'
   }
 
-  if (status.mode === 'default' || status.mode === 'offline' || status.mode === 'empty') {
+  if (
+    status.mode === 'default' ||
+    status.mode === 'offline' ||
+    status.mode === 'empty' ||
+    (status.mode === 'normal' && !status.currentMediaId)
+  ) {
     return 'default'
   }
 
@@ -87,6 +93,7 @@ export function shouldUseManualVideoReplay(item: TimelineItem): boolean {
 }
 
 type DisposableMediaNode = {
+  __hexmonCleanup?: () => void
   pause?: () => void
   removeAttribute?: (name: string) => void
   load?: () => void
@@ -95,15 +102,6 @@ type DisposableMediaNode = {
   parentElement?: { removeChild?: (child: DisposableMediaNode) => void } | null
   remove?: () => void
   src?: string
-}
-
-type EmbeddedWebviewElement = HTMLElement & {
-  src: string
-  stop?: () => void
-  setAudioMuted?: (muted: boolean) => void
-  loadURL?: (url: string) => void
-  addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void
-  executeJavaScript?: (code: string, userGesture?: boolean) => Promise<unknown>
 }
 
 export function shouldClearScheduledPlayback(status: PlayerStatus): boolean {
@@ -170,6 +168,12 @@ function teardownDisposableNode(node: DisposableMediaNode | null | undefined): v
 export function teardownScheduledElementTree(root: DisposableMediaNode | null | undefined): void {
   if (!root) {
     return
+  }
+
+  try {
+    root.__hexmonCleanup?.()
+  } catch {
+    // ignore teardown errors from managed nodes
   }
 
   const descendants =
@@ -286,6 +290,7 @@ class Player {
         } else if (data.type === 'clear-active') {
           this.log('debug', 'Received clear-active event', data)
           this.clearScheduledPlayback(data.reason || 'clear-active')
+          this.setActiveSource('default')
         } else if (data.type === 'show-fallback') {
           this.log('warn', 'Received show-fallback event', data)
           this.showFallback(data.message)
@@ -542,107 +547,24 @@ class Player {
       (typeof item.meta?.['fallback_local_url'] === 'string' ? String(item.meta?.['fallback_local_url']) : undefined) ||
       (typeof item.meta?.['fallback_url'] === 'string' ? String(item.meta?.['fallback_url']) : undefined)
 
-    const container = document.createElement('div')
-    container.style.position = 'absolute'
-    container.style.top = '0'
-    container.style.left = '0'
-    container.style.width = '100%'
-    container.style.height = '100%'
-    container.style.backgroundColor = '#000'
-    container.style.overflow = 'hidden'
-
-    const fallbackImageSrc = fallbackUrl
-    const fallbackImage = fallbackImageSrc ? document.createElement('img') : null
-    if (fallbackImage && fallbackImageSrc) {
-      fallbackImage.src = fallbackImageSrc
-      fallbackImage.style.position = 'absolute'
-      fallbackImage.style.top = '0'
-      fallbackImage.style.left = '0'
-      fallbackImage.style.width = '100%'
-      fallbackImage.style.height = '100%'
-      fallbackImage.style.objectFit = 'contain'
-      fallbackImage.style.backgroundColor = '#000'
-      fallbackImage.style.zIndex = '0'
-      container.appendChild(fallbackImage)
-    }
-
-    const webview = document.createElement('webview') as EmbeddedWebviewElement
-    webview.style.position = 'absolute'
-    webview.style.top = '0'
-    webview.style.left = '0'
-    webview.style.width = '100%'
-    webview.style.height = '100%'
-    webview.style.zIndex = '1'
-    webview.style.opacity = fallbackImage ? '0' : '1'
-    webview.style.transition = 'opacity 180ms ease-in-out'
-    webview.src = sourceUrl
-    webview.setAttribute('allowpopups', 'false')
-
-    const muteAndLock = () => {
-      try {
-        webview.setAudioMuted?.(true)
-      } catch {
-        // ignore webview audio mute failures
-      }
-
-      void webview
-        .executeJavaScript?.(
-          `
-            (() => {
-              const apply = () => {
-                document.querySelectorAll('video, audio').forEach((node) => {
-                  try {
-                    node.muted = true;
-                    node.volume = 0;
-                    node.autoplay = false;
-                  } catch {}
-                });
-              };
-              apply();
-              const observer = new MutationObserver(() => apply());
-              observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
-              window.open = () => null;
-            })();
-          `,
-          false
-        )
-        .catch(() => {
-          // ignore page script lock failures
+    return createWebpagePlaybackElement({
+      liveUrl: sourceUrl,
+      fallbackUrl,
+      fallbackFit: item.fit === 'stretch' ? 'fill' : item.fit,
+      onFallback: (reason) => {
+        this.log('warn', 'Scheduled webpage fallback active', {
+          itemId: item.id,
+          reason,
+          sourceUrl,
         })
-    }
-
-    const showFallback = () => {
-      webview.style.opacity = '0'
-      if (fallbackImage) {
-        fallbackImage.style.display = 'block'
-      }
-    }
-
-    webview.addEventListener('dom-ready', () => {
-      muteAndLock()
-      webview.style.opacity = '1'
-      if (fallbackImage) {
-        fallbackImage.style.display = 'none'
-      }
+      },
+      onLog: (level, message, data) => {
+        this.log(level, message, {
+          itemId: item.id,
+          ...data,
+        })
+      },
     })
-
-    webview.addEventListener('did-fail-load', () => {
-      showFallback()
-    })
-
-    webview.addEventListener('did-navigate', ((event: Event) => {
-      const nextUrl = String((event as unknown as { url?: string }).url || '')
-      if (nextUrl && nextUrl !== sourceUrl) {
-        try {
-          webview.loadURL?.(sourceUrl)
-        } catch {
-          showFallback()
-        }
-      }
-    }) as EventListener)
-
-    container.appendChild(webview)
-    return container
   }
 
   private renderScene(sceneItem: TimelineItem, scene: LayoutScene): HTMLElement {
@@ -700,8 +622,18 @@ class Player {
 
     const sourceContentType =
       typeof item.meta?.['source_content_type'] === 'string' ? String(item.meta?.['source_content_type']) : undefined
-    const localSourceLooksLikePdf = Boolean(item.localUrl && /\.pdf(\?|#|$)/i.test(item.localUrl))
-    if (item.type === 'pdf' && sourceContentType === 'application/pdf' && item.remoteUrl && !localSourceLooksLikePdf) {
+    const contentType =
+      typeof item.meta?.['content_type'] === 'string' ? String(item.meta?.['content_type']) : undefined
+    const localSourceLooksLikePdf = Boolean(
+      (item.localUrl && /\.pdf(\?|#|$)/i.test(item.localUrl)) ||
+      (item.localPath && /\.pdf(\?|#|$)/i.test(item.localPath))
+    )
+    if (
+      item.type === 'pdf' &&
+      (contentType === 'application/pdf' || sourceContentType === 'application/pdf') &&
+      item.remoteUrl &&
+      !localSourceLooksLikePdf
+    ) {
       return item.remoteUrl
     }
 
@@ -1084,11 +1016,14 @@ class Player {
   private getItemCompatibility(item: TimelineItem): CompatResult {
     const sourceContentType =
       typeof item.meta?.['source_content_type'] === 'string' ? (item.meta?.['source_content_type'] as string) : undefined
+    const contentType =
+      typeof item.meta?.['content_type'] === 'string' ? (item.meta?.['content_type'] as string) : undefined
     const mediaName = typeof item.meta?.['name'] === 'string' ? (item.meta?.['name'] as string) : undefined
     const mediaUrl = item.localUrl || item.remoteUrl || item.url || item.localPath
 
     return checkMediaCompatibility({
       type: item.type,
+      content_type: contentType,
       source_content_type: sourceContentType,
       name: mediaName,
       media_url: mediaUrl,

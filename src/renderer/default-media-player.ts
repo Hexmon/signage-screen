@@ -3,17 +3,19 @@
  */
 
 import type { DefaultMediaResponse, DefaultMediaItem } from '../common/types'
+import { createWebpagePlaybackElement } from './webpage-playback.js'
 
 export interface DefaultMediaPlayerOptions {
   debugOverlay?: boolean
   onRefreshRequested?: (reason: string) => void
 }
 
-export function resolveDefaultMediaSource(media: DefaultMediaItem): string {
-  return media.local_url || media.media_url
+export function resolveDefaultMediaSource(media: DefaultMediaItem): string | undefined {
+  return media.local_url || media.fallback_media_url || media.media_url
 }
 
 type DisposableDefaultMediaNode = {
+  __hexmonCleanup?: () => void
   pause?: () => void
   removeAttribute?: (name: string) => void
   load?: () => void
@@ -22,15 +24,6 @@ type DisposableDefaultMediaNode = {
   parentElement?: { removeChild?: (child: DisposableDefaultMediaNode) => void } | null
   remove?: () => void
   src?: string
-}
-
-type EmbeddedWebviewElement = HTMLElement & {
-  src: string
-  stop?: () => void
-  setAudioMuted?: (muted: boolean) => void
-  loadURL?: (url: string) => void
-  addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void
-  executeJavaScript?: (code: string, userGesture?: boolean) => Promise<unknown>
 }
 
 function teardownDefaultMediaNode(node: DisposableDefaultMediaNode | null | undefined): void {
@@ -89,6 +82,12 @@ function teardownDefaultMediaNode(node: DisposableDefaultMediaNode | null | unde
 export function teardownDefaultMediaElementTree(root: DisposableDefaultMediaNode | null | undefined): void {
   if (!root) {
     return
+  }
+
+  try {
+    root.__hexmonCleanup?.()
+  } catch {
+    // ignore inert teardown failures
   }
 
   const descendants =
@@ -165,7 +164,9 @@ export class DefaultMediaPlayer {
 
   setMedia(payload: DefaultMediaResponse | null | undefined): void {
     this.current = payload && typeof payload === 'object' ? payload : { media_id: null, media: null }
-    const nextKey = this.current.media ? `${this.current.media.id}:${this.current.media.media_url}` : 'none'
+    const nextKey = this.current.media
+      ? `${this.current.media.id}:${this.current.media.media_url || ''}:${this.current.media.fallback_media_url || ''}:${this.current.media.source_url || ''}`
+      : 'none'
     if (nextKey !== this.lastMediaKey) {
       this.lastMediaKey = nextKey
       this.resetRetry()
@@ -230,8 +231,9 @@ export class DefaultMediaPlayer {
   }
 
   private renderImage(media: DefaultMediaItem): HTMLElement {
+    const source = resolveDefaultMediaSource(media)
     const img = document.createElement('img')
-    img.src = resolveDefaultMediaSource(media)
+    img.src = source || ''
     img.style.width = '100%'
     img.style.height = '100%'
     img.style.objectFit = 'contain'
@@ -249,8 +251,9 @@ export class DefaultMediaPlayer {
   }
 
   private renderVideo(media: DefaultMediaItem): HTMLElement {
+    const source = resolveDefaultMediaSource(media)
     const video = document.createElement('video')
-    video.src = resolveDefaultMediaSource(media)
+    video.src = source || ''
     video.autoplay = true
     video.loop = true
     video.muted = true
@@ -276,8 +279,9 @@ export class DefaultMediaPlayer {
 
   private renderDocument(media: DefaultMediaItem): HTMLElement {
     if (this.isPdf(media)) {
+      const source = resolveDefaultMediaSource(media)
       const iframe = document.createElement('iframe')
-      iframe.src = resolveDefaultMediaSource(media)
+      iframe.src = source || ''
       iframe.style.width = '100%'
       iframe.style.height = '100%'
       iframe.style.border = '0'
@@ -312,114 +316,23 @@ export class DefaultMediaPlayer {
       return this.renderUnsupported(media)
     }
 
-    const container = document.createElement('div')
-    container.style.position = 'absolute'
-    container.style.top = '0'
-    container.style.left = '0'
-    container.style.width = '100%'
-    container.style.height = '100%'
-    container.style.background = '#000'
-    container.style.overflow = 'hidden'
-
-    const fallbackImageSrc = fallbackUrl
-    const fallbackImage = fallbackImageSrc ? document.createElement('img') : null
-    if (fallbackImage && fallbackImageSrc) {
-      fallbackImage.src = fallbackImageSrc
-      fallbackImage.style.position = 'absolute'
-      fallbackImage.style.top = '0'
-      fallbackImage.style.left = '0'
-      fallbackImage.style.width = '100%'
-      fallbackImage.style.height = '100%'
-      fallbackImage.style.objectFit = 'contain'
-      fallbackImage.style.background = '#000'
-      fallbackImage.style.zIndex = '0'
-      container.appendChild(fallbackImage)
-    }
-
-    const webview = document.createElement('webview') as EmbeddedWebviewElement
-    webview.style.position = 'absolute'
-    webview.style.top = '0'
-    webview.style.left = '0'
-    webview.style.width = '100%'
-    webview.style.height = '100%'
-    webview.style.opacity = fallbackImage ? '0' : '1'
-    webview.style.transition = 'opacity 180ms ease-in-out'
-    webview.style.zIndex = '1'
-    webview.src = liveUrl
-    webview.setAttribute('allowpopups', 'false')
-
-    const muteAndLock = () => {
-      try {
-        webview.setAudioMuted?.(true)
-      } catch {
-        // ignore webview audio mute failures
-      }
-
-      void webview
-        .executeJavaScript?.(
-          `
-            (() => {
-              const apply = () => {
-                document.querySelectorAll('video, audio').forEach((node) => {
-                  try {
-                    node.muted = true;
-                    node.volume = 0;
-                    node.autoplay = false;
-                  } catch {}
-                });
-              };
-              apply();
-              const observer = new MutationObserver(() => apply());
-              observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
-              window.open = () => null;
-            })();
-          `,
-          false
-        )
-        .catch(() => {
-          // ignore live page script-injection failures
-        })
-    }
-
-    const showFallback = (reason: string) => {
-      webview.style.opacity = '0'
-      if (fallbackImage) {
-        fallbackImage.style.display = 'block'
-        this.showStatus('Using cached webpage preview')
-        this.scheduleRefresh(reason)
+    return createWebpagePlaybackElement({
+      liveUrl,
+      fallbackUrl,
+      fallbackFit: 'contain',
+      onHealthy: () => {
         this.markHealthy()
-        return
-      }
-
-      this.handlePlaybackError(reason)
-    }
-
-    webview.addEventListener('dom-ready', () => {
-      muteAndLock()
-      webview.style.opacity = '1'
-      if (fallbackImage) {
-        fallbackImage.style.display = 'none'
-      }
-      this.markHealthy()
-    })
-
-    webview.addEventListener('did-fail-load', () => {
-      showFallback('webpage-error')
-    })
-
-    webview.addEventListener('did-navigate', ((event: Event) => {
-      const nextUrl = String((event as unknown as { url?: string }).url || '')
-      if (nextUrl && nextUrl !== liveUrl) {
-        try {
-          webview.loadURL?.(liveUrl)
-        } catch {
-          showFallback('webpage-redirect')
+      },
+      onFallback: (reason) => {
+        if (fallbackUrl) {
+          this.showStatus('Using cached webpage preview')
+          this.scheduleRefresh(reason)
+          return
         }
-      }
-    }) as EventListener)
 
-    container.appendChild(webview)
-    return container
+        this.handlePlaybackError(reason)
+      },
+    })
   }
 
   private renderUnsupported(media: DefaultMediaItem): HTMLElement {
@@ -484,17 +397,19 @@ export class DefaultMediaPlayer {
   }
 
   private isPdf(media: DefaultMediaItem): boolean {
-    const contentType = media.source_content_type?.toLowerCase() || ''
+    const contentType = media.content_type?.toLowerCase() || media.source_content_type?.toLowerCase() || ''
     if (contentType.includes('pdf')) {
       return true
     }
 
-    return /\.pdf(\?|#|$)/i.test(media.media_url)
+    return [media.local_url, media.media_url, media.fallback_media_url].some(
+      (value) => typeof value === 'string' && /\.pdf(\?|#|$)/i.test(value)
+    )
   }
 
   private getDocumentLabel(media: DefaultMediaItem): string {
     const name = media.name || 'Untitled document'
-    const type = media.source_content_type || media.type
+    const type = media.content_type || media.source_content_type || media.type
     return `${name} (${type})`
   }
 

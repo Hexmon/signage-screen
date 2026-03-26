@@ -79,4 +79,29 @@ describe('Settings Client', () => {
     expect(parsed.media?.fallback_media_url).to.equal('https://cdn.example.com/webpage-fallback.svg')
     expect(parsed.media?.media_url).to.equal('https://cdn.example.com/webpage-fallback.svg')
   })
+
+  it('should parse webpage default media when only a live source_url is available', () => {
+    const raw = {
+      source: 'GLOBAL',
+      media_id: 'media-webpage-live',
+      media: {
+        id: 'media-webpage-live',
+        name: 'Live Status',
+        type: 'WEBPAGE',
+        source_content_type: 'text/html',
+        source_url: 'https://status.example.com/live',
+        media_url: null,
+        fallback_media_url: null,
+      },
+    }
+
+    const parsed = normalizeDefaultMediaResponse(raw)
+
+    expect(parsed.source).to.equal('GLOBAL')
+    expect(parsed.media_id).to.equal('media-webpage-live')
+    expect(parsed.media?.type).to.equal('WEBPAGE')
+    expect(parsed.media?.source_url).to.equal('https://status.example.com/live')
+    expect(parsed.media?.media_url).to.equal(undefined)
+    expect(parsed.media?.fallback_media_url).to.equal(undefined)
+  })
 })

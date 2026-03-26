@@ -56,9 +56,24 @@ function normalizeMediaType(value?: string): MediaType {
   if (normalized === 'image') return 'image'
   if (normalized === 'video') return 'video'
   if (normalized === 'pdf') return 'pdf'
+  if (normalized === 'document') return 'office'
   if (normalized === 'office') return 'office'
   if (normalized === 'url') return 'url'
   if (normalized === 'webpage') return 'url'
+  if (normalized.startsWith('image/')) return 'image'
+  if (normalized.startsWith('video/')) return 'video'
+  if (normalized.includes('pdf')) return 'pdf'
+  if (
+    normalized.includes('spreadsheet') ||
+    normalized.includes('excel') ||
+    normalized.includes('msword') ||
+    normalized.includes('wordprocessingml') ||
+    normalized.includes('presentation') ||
+    normalized.includes('powerpoint') ||
+    normalized === 'text/csv'
+  ) {
+    return 'office'
+  }
   return inferTypeFromUrl(value)
 }
 
@@ -68,8 +83,13 @@ function normalizeItem(input: any, mediaUrlMap: SnapshotMediaUrlMap): TimelineIt
   }
 
   const mediaId = input.media_id || input.mediaId || input.id
-  const typeHint = input.type || input.media_type || input.source_url || input.url || input.media_url
-  const type: MediaType = normalizeMediaType(typeHint)
+  const contentType = typeof input.content_type === 'string' ? input.content_type : undefined
+  const sourceContentType = typeof input.source_content_type === 'string' ? input.source_content_type : undefined
+  const explicitType = normalizeMediaType(input.type || input.media_type)
+  const type: MediaType =
+    explicitType === 'url'
+      ? 'url'
+      : normalizeMediaType(contentType || sourceContentType || input.type || input.media_type || input.source_url || input.url || input.media_url)
   const remoteUrl =
     type === 'url'
       ? input.url || input.source_url || input.media_url || (mediaId ? mediaUrlMap[mediaId] : undefined)
@@ -103,7 +123,8 @@ function normalizeItem(input: any, mediaUrlMap: SnapshotMediaUrlMap): TimelineIt
             ? input.media_url
             : undefined,
       name: typeof input.name === 'string' ? input.name : undefined,
-      source_content_type: typeof input.source_content_type === 'string' ? input.source_content_type : undefined,
+      content_type: contentType,
+      source_content_type: sourceContentType,
     },
     transitionDurationMs,
   }

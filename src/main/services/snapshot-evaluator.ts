@@ -28,12 +28,13 @@ export interface ScheduleEvaluationResult {
 
 function inferTypeFromValue(input: {
   mediaType?: string
+  contentType?: string
   sourceContentType?: string
   mediaName?: string
   remoteUrl?: string
 }): MediaType {
   const normalizedType = input.mediaType?.toLowerCase()
-  const normalizedMime = normalizeMime(input.sourceContentType)
+  const normalizedMime = normalizeMime(input.contentType || input.sourceContentType)
   const extension = getExtensionFromName(input.mediaName) || getExtensionFromUrl(input.remoteUrl)
 
   if (normalizedType === 'image' || normalizedMime?.startsWith('image/')) return 'image'
@@ -85,6 +86,7 @@ function buildTimelineItem(input: {
   mediaId?: string
   mediaName?: string
   mediaType?: string
+  contentType?: string
   sourceContentType?: string
   remoteUrl?: string
   durationSeconds?: number
@@ -107,6 +109,7 @@ function buildTimelineItem(input: {
     remoteUrl,
     type: inferTypeFromValue({
       mediaType: input.mediaType,
+      contentType: input.contentType,
       sourceContentType: input.sourceContentType,
       mediaName: input.mediaName,
       remoteUrl,
@@ -119,6 +122,7 @@ function buildTimelineItem(input: {
     meta: {
       ...input.meta,
       name: input.mediaName,
+      content_type: input.contentType,
       source_content_type: input.sourceContentType,
       source_url: input.sourceUrl ?? undefined,
       fallback_url: input.fallbackUrl ?? undefined,
@@ -152,6 +156,7 @@ export function buildWindowItems(
         mediaId: entry.media_id,
         mediaName: entry.media?.name,
         mediaType: entry.media?.type,
+        contentType: entry.media?.content_type,
         sourceContentType: entry.media?.source_content_type,
         remoteUrl: entry.media_id ? mediaUrlMap[entry.media_id] : undefined,
         sourceUrl: entry.media?.source_url ?? entry.media?.url ?? null,
@@ -177,6 +182,7 @@ export function buildWindowItems(
         mediaId: entry.media_id,
         mediaName: entry.media?.name,
         mediaType: entry.media?.type,
+        contentType: entry.media?.content_type,
         sourceContentType: entry.media?.source_content_type,
         remoteUrl: entry.media_id ? mediaUrlMap[entry.media_id] : undefined,
         sourceUrl: entry.media?.source_url ?? entry.media?.url ?? null,

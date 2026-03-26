@@ -17,6 +17,21 @@ import { getSettingsClient, normalizeDefaultMediaResponse } from './settings-cli
 
 const logger = getLogger('default-media-service')
 
+function normalizeComparableAssetUrl(value?: string): string | undefined {
+  if (!value) {
+    return undefined
+  }
+
+  try {
+    const parsed = new URL(value)
+    parsed.search = ''
+    parsed.hash = ''
+    return parsed.toString()
+  } catch {
+    return value
+  }
+}
+
 export class DefaultMediaService extends EventEmitter {
   private mainWindow?: BrowserWindow
   private pollInterval?: NodeJS.Timeout
@@ -162,12 +177,14 @@ export class DefaultMediaService extends EventEmitter {
 
     return (
       previous.media.id !== next.media.id ||
-      previous.media.media_url !== next.media.media_url ||
+      normalizeComparableAssetUrl(previous.media.media_url) !== normalizeComparableAssetUrl(next.media.media_url) ||
       previous.media.source_url !== next.media.source_url ||
-      previous.media.fallback_media_url !== next.media.fallback_media_url ||
-      previous.media.local_url !== next.media.local_url ||
+      normalizeComparableAssetUrl(previous.media.fallback_media_url) !==
+        normalizeComparableAssetUrl(next.media.fallback_media_url) ||
+      normalizeComparableAssetUrl(previous.media.local_url) !== normalizeComparableAssetUrl(next.media.local_url) ||
       previous.media.type !== next.media.type ||
       previous.media.name !== next.media.name ||
+      previous.media.content_type !== next.media.content_type ||
       previous.media.source_content_type !== next.media.source_content_type
     )
   }
@@ -203,10 +220,13 @@ export class DefaultMediaService extends EventEmitter {
     }
 
     const cacheManager = getCacheManager()
+    const cacheUrl = media.type === 'WEBPAGE'
+      ? media.fallback_media_url || media.media_url
+      : media.media_url
 
     try {
-      if (media.media_url) {
-        await cacheManager.add(mediaId, media.media_url)
+      if (cacheUrl) {
+        await cacheManager.add(mediaId, cacheUrl)
       }
     } catch (error) {
       logger.warn({ error, mediaId }, 'Failed to cache resolved default media')

@@ -29,6 +29,20 @@ describe('Default Media Player helpers', () => {
     expect(source).to.equal('https://cdn.example.com/fallback.mp4')
   })
 
+  it('uses fallback_media_url when webpage preview has no direct media_url', async () => {
+    const { resolveDefaultMediaSource } = await import('../../../src/renderer/default-media-player.ts')
+
+    const source = resolveDefaultMediaSource({
+      id: 'media-webpage',
+      name: 'Status',
+      type: 'WEBPAGE',
+      source_url: 'https://status.example.com',
+      fallback_media_url: 'https://cdn.example.com/webpage-fallback.svg',
+    })
+
+    expect(source).to.equal('https://cdn.example.com/webpage-fallback.svg')
+  })
+
   it('recursively tears down hidden default-media trees', async () => {
     const { teardownDefaultMediaElementTree } = await import('../../../src/renderer/default-media-player.ts')
 

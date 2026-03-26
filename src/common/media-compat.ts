@@ -123,7 +123,7 @@ export function inferKind(media: MediaInput): MediaKind | 'UNKNOWN' {
   if (typeHint) return typeHint
 
   const mime = normalizeMime(
-    media.source_content_type || media.sourceContentType || media.content_type || media.contentType
+    media.content_type || media.contentType || media.source_content_type || media.sourceContentType
   )
   const mimeKind = getKindFromMime(mime)
   if (mimeKind) return mimeKind
@@ -155,7 +155,7 @@ function buildResult(
 export function checkMediaCompatibility(media: MediaInput): CompatResult {
   const rawType = normalizeType(media.type || media.media_type || media.mediaType)
   const normalizedMime = normalizeMime(
-    media.source_content_type || media.sourceContentType || media.content_type || media.contentType
+    media.content_type || media.contentType || media.source_content_type || media.sourceContentType
   )
   const extFromName = getExtensionFromName(media.name)
   const extFromUrl = getExtensionFromUrl(media.media_url || media.mediaUrl || media.url)

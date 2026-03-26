@@ -69,6 +69,27 @@ describe('Snapshot Parser', () => {
     expect(parsed.defaultItem?.remoteUrl).to.equal('https://cdn.example.com/default.jpg')
   })
 
+  it('should treat converted default documents as pdf playback when content_type is pdf', () => {
+    const raw = {
+      id: 'snap-doc-default',
+      default_media: {
+        media_id: 'media-default-doc',
+        media_url: 'https://cdn.example.com/converted.pdf',
+        type: 'DOCUMENT',
+        content_type: 'application/pdf',
+        source_content_type: 'text/csv',
+        display_ms: 12000,
+      },
+    }
+
+    const parsed = parseSnapshotResponse(raw)
+
+    expect(parsed.defaultItem).to.exist
+    expect(parsed.defaultItem?.type).to.equal('pdf')
+    expect(parsed.defaultItem?.meta?.content_type).to.equal('application/pdf')
+    expect(parsed.defaultItem?.meta?.source_content_type).to.equal('text/csv')
+  })
+
   it('should parse root-level default media from wrapped device snapshot responses', () => {
     const raw = {
       device_id: 'device-1',
@@ -172,6 +193,53 @@ describe('Snapshot Parser', () => {
     expect(parsed.scheduleWindows[0].items[0].remoteUrl).to.equal('https://cdn.example.com/lobby-loop.mp4')
     expect(parsed.scheduleWindows[0].items[0].fit).to.equal('cover')
     expect(parsed.scheduleWindows[0].items[0].loop).to.equal(true)
+  })
+
+  it('should parse converted scheduled documents as pdf playback items', () => {
+    const raw = {
+      snapshot_id: 'snap-8',
+      schedule: {
+        id: 'sched-8',
+        items: [
+          {
+            id: 'schedule-item-1',
+            start_at: '2026-03-18T14:12:00.000Z',
+            end_at: '2026-03-18T15:12:00.000Z',
+            priority: 2,
+            presentation: {
+              id: 'presentation-1',
+              name: 'Converted docs',
+              items: [
+                {
+                  id: 'presentation-item-1',
+                  media_id: 'media-1',
+                  order: 0,
+                  duration_seconds: 15,
+                  media: {
+                    id: 'media-1',
+                    name: 'report.csv',
+                    type: 'DOCUMENT',
+                    content_type: 'application/pdf',
+                    source_content_type: 'text/csv',
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+      media_urls: {
+        'media-1': 'https://cdn.example.com/converted.pdf',
+      },
+    }
+
+    const parsed = parseSnapshotResponse(raw)
+
+    expect(parsed.scheduleWindows).to.have.length(1)
+    expect(parsed.scheduleWindows[0].items).to.have.length(1)
+    expect(parsed.scheduleWindows[0].items[0].type).to.equal('pdf')
+    expect(parsed.scheduleWindows[0].items[0].meta?.content_type).to.equal('application/pdf')
+    expect(parsed.scheduleWindows[0].items[0].meta?.source_content_type).to.equal('text/csv')
   })
 
   it('should not misread timed layout windows as direct playlist items', () => {

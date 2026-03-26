@@ -36,6 +36,18 @@ describe('Player layout helpers', () => {
     expect(source).to.equal('default')
   })
 
+  it('switches to default content when scheduled playback has no active item', async () => {
+    const { resolvePlayerContentSource } = await import('../../../src/renderer/player.ts')
+
+    const source = resolvePlayerContentSource({
+      state: 'PAIRED_RUNTIME',
+      mode: 'normal',
+      online: true,
+    })
+
+    expect(source).to.equal('default')
+  })
+
   it('uses manual replay for loop-enabled scheduled videos', async () => {
     const { shouldUseManualVideoReplay } = await import('../../../src/renderer/player.ts')
 

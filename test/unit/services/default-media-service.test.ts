@@ -153,6 +153,100 @@ describe('Default Media Service', () => {
     expect(service.getCurrent().media_id).to.equal('media-global')
   })
 
+  it('caches webpage fallback previews without trying to cache the live source url', async () => {
+    const { DefaultMediaService } = require('../../../src/main/services/settings/default-media-service.ts')
+    const { getPairingService } = require('../../../src/main/services/pairing-service')
+    const { getSettingsClient } = require('../../../src/main/services/settings/settings-client')
+    const { getCacheManager } = require('../../../src/main/services/cache/cache-manager')
+
+    const pairingService = getPairingService()
+    const settingsClient = getSettingsClient()
+    const cacheManager = getCacheManager()
+    const cachedPath = path.join(tempDir, 'cache', 'media', 'media-webpage.svg')
+
+    sandbox.stub(pairingService, 'isPairedDevice').returns(true)
+    sandbox.stub(pairingService, 'getDeviceId').returns('device-123')
+    const addStub = sandbox.stub(cacheManager, 'add').resolves()
+    const getStub = sandbox.stub(cacheManager, 'get').resolves(cachedPath)
+    sandbox.stub(settingsClient, 'getDefaultMedia').resolves({
+      source: 'GLOBAL',
+      aspect_ratio: null,
+      media_id: 'media-webpage',
+      media: {
+        id: 'media-webpage',
+        name: 'Status Board',
+        type: 'WEBPAGE',
+        media_url: undefined,
+        source_url: 'https://status.example.com',
+        fallback_media_url: 'https://cdn.example.com/webpage-fallback.svg',
+        source_content_type: 'text/html',
+      },
+    })
+
+    const service = new DefaultMediaService()
+    const result = await service.refreshNow('manual')
+
+    expect(addStub.calledOnceWithExactly('media-webpage', 'https://cdn.example.com/webpage-fallback.svg')).to.equal(true)
+    expect(getStub.calledWith('media-webpage')).to.equal(true)
+    expect(result.media?.local_path).to.equal(cachedPath)
+    expect(result.media?.source_url).to.equal('https://status.example.com')
+  })
+
+  it('does not emit a change when the same default media only gets fresh presigned asset urls', async () => {
+    const { DefaultMediaService } = require('../../../src/main/services/settings/default-media-service.ts')
+    const { getPairingService } = require('../../../src/main/services/pairing-service')
+    const { getSettingsClient } = require('../../../src/main/services/settings/settings-client')
+    const { getCacheManager } = require('../../../src/main/services/cache/cache-manager')
+
+    const pairingService = getPairingService()
+    const settingsClient = getSettingsClient()
+    const cacheManager = getCacheManager()
+    const cachedPath = path.join(tempDir, 'cache', 'media', 'media-webpage.png')
+
+    sandbox.stub(pairingService, 'isPairedDevice').returns(true)
+    sandbox.stub(pairingService, 'getDeviceId').returns('device-123')
+    sandbox.stub(cacheManager, 'add').resolves()
+    sandbox.stub(cacheManager, 'get').resolves(cachedPath)
+    const getDefaultMediaStub = sandbox.stub(settingsClient, 'getDefaultMedia')
+    getDefaultMediaStub.onFirstCall().resolves({
+      source: 'GLOBAL',
+      aspect_ratio: null,
+      media_id: 'media-webpage',
+      media: {
+        id: 'media-webpage',
+        name: 'Status Board',
+        type: 'WEBPAGE',
+        media_url: undefined,
+        source_url: 'https://status.example.com/dashboard?view=ops',
+        fallback_media_url: 'https://cdn.example.com/webpage-fallback.png?X-Amz-Signature=one',
+        source_content_type: 'text/html',
+      },
+    })
+    getDefaultMediaStub.onSecondCall().resolves({
+      source: 'GLOBAL',
+      aspect_ratio: null,
+      media_id: 'media-webpage',
+      media: {
+        id: 'media-webpage',
+        name: 'Status Board',
+        type: 'WEBPAGE',
+        media_url: undefined,
+        source_url: 'https://status.example.com/dashboard?view=ops',
+        fallback_media_url: 'https://cdn.example.com/webpage-fallback.png?X-Amz-Signature=two',
+        source_content_type: 'text/html',
+      },
+    })
+
+    const service = new DefaultMediaService()
+    const changedSpy = sandbox.spy()
+    service.on('changed', changedSpy)
+
+    await service.refreshNow('manual')
+    await service.refreshNow('poll')
+
+    expect(changedSpy.calledOnce).to.equal(true)
+  })
+
   it('skips resolved fallback fetch when the player is not paired', async () => {
     const { DefaultMediaService } = require('../../../src/main/services/settings/default-media-service.ts')
     const { getPairingService } = require('../../../src/main/services/pairing-service')

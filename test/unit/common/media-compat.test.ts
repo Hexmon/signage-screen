@@ -40,6 +40,20 @@ describe('Media Compatibility', () => {
     expect(result.kind).to.equal('DOCUMENT')
   })
 
+  it('should prefer playback content_type when converted documents resolve to pdf', () => {
+    const result = checkMediaCompatibility({
+      type: 'DOCUMENT',
+      content_type: 'application/pdf',
+      source_content_type: 'text/csv',
+      media_url: 'https://cdn.example.com/converted.pdf',
+      name: 'report.csv',
+    })
+
+    expect(result.status).to.equal('PLAYABLE_NOW')
+    expect(result.kind).to.equal('DOCUMENT')
+    expect(result.normalizedMime).to.equal('application/pdf')
+  })
+
   it('should mark office docs as accepted but not supported', () => {
     const docx = checkMediaCompatibility({ type: 'DOCUMENT', name: 'report.docx' })
     expect(docx.status).to.equal('ACCEPTED_BUT_NOT_SUPPORTED_YET')

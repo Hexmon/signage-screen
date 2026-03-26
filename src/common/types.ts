@@ -112,8 +112,9 @@ export interface DefaultMediaItem {
   id: string
   name: string
   type: DefaultMediaType
+  content_type?: string
   source_content_type?: string
-  media_url: string
+  media_url?: string
   source_url?: string
   fallback_media_url?: string
   local_path?: string
@@ -248,6 +249,7 @@ export interface SnapshotPresentationMedia {
   name?: string
   type?: string
   status?: string
+  content_type?: string
   source_content_type?: string
   source_url?: string | null
   fallback_url?: string | null
@@ -300,6 +302,8 @@ export interface SnapshotMediaEntry {
   fallback_url?: string | null
   type?: MediaType
   media_type?: MediaType
+  content_type?: string
+  source_content_type?: string
   sha256?: string
   size?: number
 }
@@ -323,6 +327,8 @@ export interface DeviceSnapshot {
     fallback_url?: string | null
     type?: MediaType
     media_type?: MediaType
+    content_type?: string
+    source_content_type?: string
     display_ms?: number
     displayMs?: number
     fit?: FitMode
@@ -338,6 +344,8 @@ export interface DeviceSnapshot {
     fallback_url?: string | null
     type?: MediaType
     media_type?: MediaType
+    content_type?: string
+    source_content_type?: string
     display_ms?: number
     displayMs?: number
     fit?: FitMode
