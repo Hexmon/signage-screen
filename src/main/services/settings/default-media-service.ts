@@ -163,6 +163,8 @@ export class DefaultMediaService extends EventEmitter {
     return (
       previous.media.id !== next.media.id ||
       previous.media.media_url !== next.media.media_url ||
+      previous.media.source_url !== next.media.source_url ||
+      previous.media.fallback_media_url !== next.media.fallback_media_url ||
       previous.media.local_url !== next.media.local_url ||
       previous.media.type !== next.media.type ||
       previous.media.name !== next.media.name ||

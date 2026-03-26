@@ -2,7 +2,7 @@
  * Media compatibility helper
  */
 
-export type MediaKind = 'IMAGE' | 'VIDEO' | 'DOCUMENT'
+export type MediaKind = 'IMAGE' | 'VIDEO' | 'DOCUMENT' | 'WEBPAGE'
 export type CompatStatus = 'PLAYABLE_NOW' | 'ACCEPTED_BUT_NOT_SUPPORTED_YET' | 'REJECTED'
 
 export interface CompatResult {
@@ -15,7 +15,7 @@ export interface CompatResult {
 
 const IMAGE_EXT = new Set(['jpg', 'jpeg', 'png', 'webp'])
 const VIDEO_EXT = new Set(['mp4', 'mov'])
-const DOC_EXT = new Set(['pdf', 'ppt', 'pptx', 'csv', 'doc', 'docx'])
+const DOC_EXT = new Set(['pdf', 'ppt', 'pptx', 'csv', 'doc', 'docx', 'xls', 'xlsx'])
 
 const IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp'])
 const VIDEO_MIME = new Set(['video/mp4', 'video/quicktime'])
@@ -26,6 +26,8 @@ const DOC_MIME = new Set([
   'text/csv',
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 ])
 
 type MediaInput = {
@@ -89,8 +91,8 @@ function getKindFromRawType(rawType?: string): MediaKind | undefined {
   if (rawType === 'DOCUMENT') return 'DOCUMENT'
   if (rawType === 'PDF') return 'DOCUMENT'
   if (rawType === 'OFFICE') return 'DOCUMENT'
-
-  if (rawType === 'URL') return undefined
+  if (rawType === 'WEBPAGE') return 'WEBPAGE'
+  if (rawType === 'URL') return 'WEBPAGE'
 
   return undefined
 }
@@ -222,6 +224,10 @@ export function checkMediaCompatibility(media: MediaInput): CompatResult {
     }
 
     return buildResult('REJECTED', 'DOCUMENT', 'document type not supported', normalizedExt, normalizedMime)
+  }
+
+  if (kind === 'WEBPAGE') {
+    return buildResult('PLAYABLE_NOW', 'WEBPAGE', 'webpage supported', normalizedExt, normalizedMime)
   }
 
   return buildResult('REJECTED', 'UNKNOWN', 'unable to infer media type', normalizedExt, normalizedMime)

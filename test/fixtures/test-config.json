@@ -2,27 +2,52 @@
   "apiBase": "https://api-test.hexmon.com",
   "wsUrl": "wss://api-test.hexmon.com/ws",
   "deviceId": "test-device-123",
-  "logLevel": "error",
-  "mTLS": {
-    "enabled": true,
-    "certPath": "./test/fixtures/certs"
+  "runtime": {
+    "mode": "dev"
+  },
+  "mtls": {
+    "enabled": false,
+    "certPath": "/Users/anuragkumar/.hexmon/certs/client.crt",
+    "keyPath": "/Users/anuragkumar/.hexmon/certs/client.key",
+    "caPath": "/Users/anuragkumar/.hexmon/certs/ca.crt",
+    "autoRenew": true,
+    "renewBeforeDays": 30
   },
   "cache": {
     "path": "./test/fixtures/cache",
     "maxBytes": 1073741824,
+    "prefetchConcurrency": 3,
+    "bandwidthBudgetMbps": 50,
     "downloadConcurrency": 3,
     "bandwidthBytesPerSecond": 10485760
   },
   "intervals": {
     "heartbeatMs": 300000,
+    "commandPollMs": 5000,
     "schedulePollMs": 300000,
-    "commandPollMs": 30000,
+    "defaultMediaPollMs": 300000,
+    "healthCheckMs": 60000,
+    "screenshotMs": 30000,
     "popFlushMs": 60000
   },
-  "display": {
-    "width": 1920,
-    "height": 1080,
-    "fullscreen": true
+  "log": {
+    "level": "info",
+    "shipPolicy": "batch",
+    "rotationSizeMb": 100,
+    "rotationIntervalHours": 24,
+    "compressionEnabled": true
+  },
+  "power": {
+    "dpmsEnabled": true,
+    "preventBlanking": true,
+    "scheduleEnabled": false
+  },
+  "security": {
+    "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'",
+    "allowedDomains": [],
+    "disableEval": true,
+    "contextIsolation": true,
+    "nodeIntegration": false,
+    "sandbox": true
   }
 }
-

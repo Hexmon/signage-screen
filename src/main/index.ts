@@ -7,7 +7,7 @@ console.log('=== HexmonSignage Player Starting ===')
 console.log('NODE_ENV:', process.env['NODE_ENV'])
 console.log('__dirname:', __dirname)
 
-import { app, BrowserWindow, screen } from 'electron'
+import { app, BrowserWindow, screen, session } from 'electron'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -46,6 +46,23 @@ if (!gotTheLock) {
 
 let mainWindow: BrowserWindow | null = null
 const restartBackoff = new ExponentialBackoff(1000, 60000, 10)
+const WEBPAGE_PARTITION = 'persist:hexmon-webpage-playback'
+
+function isSafeWebpageUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:'
+  } catch {
+    return false
+  }
+}
+
+function configureWebpageSession(): void {
+  const webpageSession = session.fromPartition(WEBPAGE_PARTITION)
+  webpageSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
+    callback(false)
+  })
+}
 
 function broadcastConfigUpdate(nextConfig?: AppConfig): void {
   const payload = nextConfig || config.getConfig()
@@ -147,6 +164,7 @@ function createWindow(): void {
       nodeIntegration: appConfig.security.nodeIntegration,
       contextIsolation: appConfig.security.contextIsolation,
       sandbox: appConfig.security.sandbox,
+      webviewTag: true,
       webSecurity: true,
       allowRunningInsecureContent: false,
       experimentalFeatures: false,
@@ -224,6 +242,24 @@ function createWindow(): void {
   mainWindow.webContents.setWindowOpenHandler(() => {
     logger.warn('Prevented new window creation')
     return { action: 'deny' }
+  })
+
+  mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+    const targetUrl = typeof params['src'] === 'string' ? params['src'] : ''
+    if (!isSafeWebpageUrl(targetUrl)) {
+      logger.warn({ url: targetUrl }, 'Prevented unsafe webpage playback URL')
+      event.preventDefault()
+      return
+    }
+
+    params['partition'] = WEBPAGE_PARTITION
+    params['allowpopups'] = 'false'
+    delete webPreferences.preload
+    webPreferences.nodeIntegration = false
+    webPreferences.contextIsolation = true
+    webPreferences.sandbox = true
+    webPreferences.webSecurity = true
+    webPreferences.allowRunningInsecureContent = false
   })
 
   applyRuntimeInteractionPolicy(mainWindow, appConfig)
@@ -512,6 +548,7 @@ app.on('ready', async () => {
   logger.info({ version: app.getVersion(), electron: process.versions.electron }, 'Application starting')
 
   try {
+    configureWebpageSession()
     setupIPCHandlers()
     createWindow()
     await initializeServices()
@@ -519,6 +556,20 @@ app.on('ready', async () => {
     logger.fatal({ error }, 'Failed to start application')
     app.quit()
   }
+})
+
+app.on('web-contents-created', (_event, contents) => {
+  if (contents.getType() !== 'webview') {
+    return
+  }
+
+  contents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  contents.on('will-navigate', (event, url) => {
+    if (!isSafeWebpageUrl(url)) {
+      logger.warn({ url }, 'Blocked unsafe webview navigation')
+      event.preventDefault()
+    }
+  })
 })
 
 app.on('window-all-closed', () => {

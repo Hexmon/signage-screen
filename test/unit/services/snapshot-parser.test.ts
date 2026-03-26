@@ -93,6 +93,29 @@ describe('Snapshot Parser', () => {
     expect(parsed.defaultItem?.remoteUrl).to.equal('https://cdn.example.com/default.jpg')
   })
 
+  it('should prefer live webpage URLs while keeping fallback preview metadata', () => {
+    const raw = {
+      id: 'snap-webpage-default',
+      default_media: {
+        media_id: 'media-webpage',
+        media_url: 'https://cdn.example.com/webpage-fallback.svg',
+        fallback_url: 'https://cdn.example.com/webpage-fallback.svg',
+        source_url: 'https://status.example.com/dashboard',
+        url: 'https://status.example.com/dashboard',
+        type: 'url',
+        display_ms: 12000,
+      },
+    }
+
+    const parsed = parseSnapshotResponse(raw)
+
+    expect(parsed.defaultItem).to.exist
+    expect(parsed.defaultItem?.type).to.equal('url')
+    expect(parsed.defaultItem?.remoteUrl).to.equal('https://status.example.com/dashboard')
+    expect(parsed.defaultItem?.meta?.fallback_url).to.equal('https://cdn.example.com/webpage-fallback.svg')
+    expect(parsed.defaultItem?.meta?.source_url).to.equal('https://status.example.com/dashboard')
+  })
+
   it('should parse timed schedule windows from published snapshot payloads', () => {
     const raw = {
       snapshot_id: 'snap-4',
@@ -254,6 +277,62 @@ describe('Snapshot Parser', () => {
     expect(parsed.scheduleWindows).to.have.length(1)
     expect(parsed.scheduleWindows[0].items).to.have.length(1)
     expect(parsed.scheduleWindows[0].items[0].remoteUrl).to.equal('https://cdn.example.com/loop.mp4')
+  })
+
+  it('should parse webpage schedule items as live URL playback with fallback preview metadata', () => {
+    const raw = {
+      snapshot_id: 'snap-webpage-window',
+      schedule: {
+        id: 'sched-webpage',
+        items: [
+          {
+            id: 'schedule-item-webpage',
+            start_at: '2026-03-18T14:12:00.000Z',
+            end_at: '2026-03-18T15:12:00.000Z',
+            priority: 2,
+            presentation: {
+              id: 'presentation-webpage',
+              name: 'Webpage scene',
+              layout: {
+                id: 'layout-1',
+                aspect_ratio: '16:9',
+                spec: { slots: [{ id: 'slot-1', x: 0, y: 0, w: 1, h: 1 }] },
+              },
+              slots: [
+                {
+                  id: 'slot-item-webpage',
+                  slot_id: 'slot-1',
+                  media_id: 'media-webpage',
+                  order: 0,
+                  duration_seconds: 15,
+                  fit_mode: 'contain',
+                  audio_enabled: false,
+                  media: {
+                    id: 'media-webpage',
+                    name: 'KPI board',
+                    type: 'WEBPAGE',
+                    source_url: 'https://status.example.com/kpi',
+                    fallback_url: 'https://cdn.example.com/kpi-fallback.svg',
+                    url: 'https://status.example.com/kpi',
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+      media_urls: {
+        'media-webpage': 'https://status.example.com/kpi',
+      },
+    }
+
+    const parsed = parseSnapshotResponse(raw)
+
+    expect(parsed.scheduleWindows).to.have.length(1)
+    expect(parsed.scheduleWindows[0].items).to.have.length(1)
+    expect(parsed.scheduleWindows[0].items[0].type).to.equal('url')
+    expect(parsed.scheduleWindows[0].items[0].remoteUrl).to.equal('https://status.example.com/kpi')
+    expect(parsed.scheduleWindows[0].items[0].meta?.fallback_url).to.equal('https://cdn.example.com/kpi-fallback.svg')
   })
 
   it('should ignore expired emergency overrides', () => {

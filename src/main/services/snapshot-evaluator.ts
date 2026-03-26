@@ -39,6 +39,7 @@ function inferTypeFromValue(input: {
   if (normalizedType === 'image' || normalizedMime?.startsWith('image/')) return 'image'
   if (normalizedType === 'video' || normalizedMime?.startsWith('video/')) return 'video'
   if (normalizedType === 'url') return 'url'
+  if (normalizedType === 'webpage') return 'url'
 
   if (
     normalizedType === 'pdf' ||
@@ -90,6 +91,8 @@ function buildTimelineItem(input: {
   fit?: string
   muted?: boolean
   loopEnabled?: boolean
+  sourceUrl?: string | null
+  fallbackUrl?: string | null
   meta?: Record<string, unknown>
 }): TimelineItem | null {
   const mediaId = input.mediaId || input.id
@@ -117,6 +120,8 @@ function buildTimelineItem(input: {
       ...input.meta,
       name: input.mediaName,
       source_content_type: input.sourceContentType,
+      source_url: input.sourceUrl ?? undefined,
+      fallback_url: input.fallbackUrl ?? undefined,
     },
   }
 }
@@ -149,6 +154,8 @@ export function buildWindowItems(
         mediaType: entry.media?.type,
         sourceContentType: entry.media?.source_content_type,
         remoteUrl: entry.media_id ? mediaUrlMap[entry.media_id] : undefined,
+        sourceUrl: entry.media?.source_url ?? entry.media?.url ?? null,
+        fallbackUrl: entry.media?.fallback_url ?? null,
         durationSeconds: entry.duration_seconds,
         fit: 'contain',
         muted: true,
@@ -172,6 +179,8 @@ export function buildWindowItems(
         mediaType: entry.media?.type,
         sourceContentType: entry.media?.source_content_type,
         remoteUrl: entry.media_id ? mediaUrlMap[entry.media_id] : undefined,
+        sourceUrl: entry.media?.source_url ?? entry.media?.url ?? null,
+        fallbackUrl: entry.media?.fallback_url ?? null,
         durationSeconds: entry.duration_seconds,
         fit: entry.fit_mode,
         muted: entry.audio_enabled === true ? false : true,

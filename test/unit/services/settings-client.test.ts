@@ -54,4 +54,29 @@ describe('Settings Client', () => {
     expect(parsed.media_id).to.equal(null)
     expect(parsed.media).to.equal(null)
   })
+
+  it('should parse webpage default media with fallback preview metadata', () => {
+    const raw = {
+      source: 'GLOBAL',
+      media_id: 'media-webpage',
+      media: {
+        id: 'media-webpage',
+        name: 'Status Dashboard',
+        type: 'WEBPAGE',
+        source_content_type: 'text/html',
+        source_url: 'https://status.example.com',
+        media_url: 'https://cdn.example.com/webpage-fallback.svg',
+        fallback_media_url: 'https://cdn.example.com/webpage-fallback.svg',
+      },
+    }
+
+    const parsed = normalizeDefaultMediaResponse(raw)
+
+    expect(parsed.source).to.equal('GLOBAL')
+    expect(parsed.media_id).to.equal('media-webpage')
+    expect(parsed.media?.type).to.equal('WEBPAGE')
+    expect(parsed.media?.source_url).to.equal('https://status.example.com')
+    expect(parsed.media?.fallback_media_url).to.equal('https://cdn.example.com/webpage-fallback.svg')
+    expect(parsed.media?.media_url).to.equal('https://cdn.example.com/webpage-fallback.svg')
+  })
 })

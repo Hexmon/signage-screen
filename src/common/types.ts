@@ -106,7 +106,7 @@ export interface LayoutScene {
 }
 
 // CMS default media types
-export type DefaultMediaType = 'IMAGE' | 'VIDEO' | 'DOCUMENT'
+export type DefaultMediaType = 'IMAGE' | 'VIDEO' | 'DOCUMENT' | 'WEBPAGE'
 
 export interface DefaultMediaItem {
   id: string
@@ -114,6 +114,8 @@ export interface DefaultMediaItem {
   type: DefaultMediaType
   source_content_type?: string
   media_url: string
+  source_url?: string
+  fallback_media_url?: string
   local_path?: string
   local_url?: string
 }
@@ -247,6 +249,9 @@ export interface SnapshotPresentationMedia {
   type?: string
   status?: string
   source_content_type?: string
+  source_url?: string | null
+  fallback_url?: string | null
+  url?: string | null
   source_bucket?: string
   source_object_key?: string
   ready_object_id?: string | null
@@ -291,6 +296,8 @@ export interface SnapshotMediaEntry {
   mediaId?: string
   url?: string
   media_url?: string
+  source_url?: string | null
+  fallback_url?: string | null
   type?: MediaType
   media_type?: MediaType
   sha256?: string
@@ -312,6 +319,8 @@ export interface DeviceSnapshot {
     mediaId?: string
     media_url?: string
     url?: string
+    source_url?: string | null
+    fallback_url?: string | null
     type?: MediaType
     media_type?: MediaType
     display_ms?: number
@@ -325,6 +334,8 @@ export interface DeviceSnapshot {
     mediaId?: string
     media_url?: string
     url?: string
+    source_url?: string | null
+    fallback_url?: string | null
     type?: MediaType
     media_type?: MediaType
     display_ms?: number

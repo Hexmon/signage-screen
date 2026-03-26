@@ -90,10 +90,20 @@ type DisposableMediaNode = {
   pause?: () => void
   removeAttribute?: (name: string) => void
   load?: () => void
+  stop?: () => void
   querySelectorAll?: (selector: string) => ArrayLike<DisposableMediaNode>
   parentElement?: { removeChild?: (child: DisposableMediaNode) => void } | null
   remove?: () => void
   src?: string
+}
+
+type EmbeddedWebviewElement = HTMLElement & {
+  src: string
+  stop?: () => void
+  setAudioMuted?: (muted: boolean) => void
+  loadURL?: (url: string) => void
+  addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void
+  executeJavaScript?: (code: string, userGesture?: boolean) => Promise<unknown>
 }
 
 export function shouldClearScheduledPlayback(status: PlayerStatus): boolean {
@@ -131,6 +141,12 @@ function teardownDisposableNode(node: DisposableMediaNode | null | undefined): v
 
   try {
     node.load?.()
+  } catch {
+    // ignore teardown errors from inert/fake nodes
+  }
+
+  try {
+    node.stop?.()
   } catch {
     // ignore teardown errors from inert/fake nodes
   }
@@ -520,18 +536,113 @@ class Player {
    * Render URL
    */
   private async renderURL(item: TimelineItem): Promise<HTMLElement> {
-    const webview = document.createElement('webview')
+    const sourceUrl = this.getMediaSource(item)
+    const fallbackUrl =
+      item.localUrl ||
+      (typeof item.meta?.['fallback_local_url'] === 'string' ? String(item.meta?.['fallback_local_url']) : undefined) ||
+      (typeof item.meta?.['fallback_url'] === 'string' ? String(item.meta?.['fallback_url']) : undefined)
+
+    const container = document.createElement('div')
+    container.style.position = 'absolute'
+    container.style.top = '0'
+    container.style.left = '0'
+    container.style.width = '100%'
+    container.style.height = '100%'
+    container.style.backgroundColor = '#000'
+    container.style.overflow = 'hidden'
+
+    const fallbackImageSrc = fallbackUrl
+    const fallbackImage = fallbackImageSrc ? document.createElement('img') : null
+    if (fallbackImage && fallbackImageSrc) {
+      fallbackImage.src = fallbackImageSrc
+      fallbackImage.style.position = 'absolute'
+      fallbackImage.style.top = '0'
+      fallbackImage.style.left = '0'
+      fallbackImage.style.width = '100%'
+      fallbackImage.style.height = '100%'
+      fallbackImage.style.objectFit = 'contain'
+      fallbackImage.style.backgroundColor = '#000'
+      fallbackImage.style.zIndex = '0'
+      container.appendChild(fallbackImage)
+    }
+
+    const webview = document.createElement('webview') as EmbeddedWebviewElement
     webview.style.position = 'absolute'
     webview.style.top = '0'
     webview.style.left = '0'
     webview.style.width = '100%'
     webview.style.height = '100%'
+    webview.style.zIndex = '1'
+    webview.style.opacity = fallbackImage ? '0' : '1'
+    webview.style.transition = 'opacity 180ms ease-in-out'
+    webview.src = sourceUrl
+    webview.setAttribute('allowpopups', 'false')
 
-    if (item.url) {
-      webview.src = item.url
+    const muteAndLock = () => {
+      try {
+        webview.setAudioMuted?.(true)
+      } catch {
+        // ignore webview audio mute failures
+      }
+
+      void webview
+        .executeJavaScript?.(
+          `
+            (() => {
+              const apply = () => {
+                document.querySelectorAll('video, audio').forEach((node) => {
+                  try {
+                    node.muted = true;
+                    node.volume = 0;
+                    node.autoplay = false;
+                  } catch {}
+                });
+              };
+              apply();
+              const observer = new MutationObserver(() => apply());
+              observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
+              window.open = () => null;
+            })();
+          `,
+          false
+        )
+        .catch(() => {
+          // ignore page script lock failures
+        })
     }
 
-    return webview
+    const showFallback = () => {
+      webview.style.opacity = '0'
+      if (fallbackImage) {
+        fallbackImage.style.display = 'block'
+      }
+    }
+
+    webview.addEventListener('dom-ready', () => {
+      muteAndLock()
+      webview.style.opacity = '1'
+      if (fallbackImage) {
+        fallbackImage.style.display = 'none'
+      }
+    })
+
+    webview.addEventListener('did-fail-load', () => {
+      showFallback()
+    })
+
+    webview.addEventListener('did-navigate', ((event: Event) => {
+      const nextUrl = String((event as unknown as { url?: string }).url || '')
+      if (nextUrl && nextUrl !== sourceUrl) {
+        try {
+          webview.loadURL?.(sourceUrl)
+        } catch {
+          showFallback()
+        }
+      }
+    }) as EventListener)
+
+    container.appendChild(webview)
+    return container
   }
 
   private renderScene(sceneItem: TimelineItem, scene: LayoutScene): HTMLElement {

@@ -235,12 +235,21 @@ export class SnapshotManager extends EventEmitter {
     if (snapshot.defaultItem) allItems.push(snapshot.defaultItem)
 
     for (const item of allItems) {
-      if (!item.mediaId || !item.remoteUrl) {
+      if (!item.mediaId) {
+        continue
+      }
+
+      const cacheUrl =
+        item.type === 'url'
+          ? (typeof item.meta?.['fallback_url'] === 'string' ? String(item.meta?.['fallback_url']) : undefined)
+          : item.remoteUrl
+
+      if (!cacheUrl) {
         continue
       }
 
       try {
-        await cacheManager.add(item.mediaId, item.remoteUrl, item.sha256)
+        await cacheManager.add(item.mediaId, cacheUrl, item.sha256)
       } catch (error) {
         if (error instanceof CacheError && error.details?.['reason'] === 'URL_EXPIRED') {
           throw error
@@ -340,17 +349,27 @@ export class SnapshotManager extends EventEmitter {
         localPath = await cacheManager.get(mediaId)
       }
 
-      if (!localPath) {
+      if (!localPath && item.type !== 'url') {
         logger.warn({ mediaId }, 'Media not cached, skipping item')
         continue
       }
 
-       localPath = await this.normalizeLocalMediaPath(item, localPath)
+      if (localPath) {
+        localPath = await this.normalizeLocalMediaPath(item, localPath)
+      }
+
+      const fallbackLocalUrl = localPath ? pathToFileURL(localPath).toString() : undefined
 
       hydrated.push({
         ...item,
         localPath,
-        localUrl: pathToFileURL(localPath).toString(),
+        localUrl: fallbackLocalUrl,
+        meta: item.type === 'url'
+          ? {
+              ...(item.meta ?? {}),
+              fallback_local_url: fallbackLocalUrl,
+            }
+          : item.meta,
       })
     }
 

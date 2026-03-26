@@ -58,6 +58,7 @@ function normalizeMediaType(value?: string): MediaType {
   if (normalized === 'pdf') return 'pdf'
   if (normalized === 'office') return 'office'
   if (normalized === 'url') return 'url'
+  if (normalized === 'webpage') return 'url'
   return inferTypeFromUrl(value)
 }
 
@@ -67,8 +68,12 @@ function normalizeItem(input: any, mediaUrlMap: SnapshotMediaUrlMap): TimelineIt
   }
 
   const mediaId = input.media_id || input.mediaId || input.id
-  const remoteUrl = input.media_url || input.url || (mediaId ? mediaUrlMap[mediaId] : undefined)
-  const type: MediaType = normalizeMediaType(input.type || input.media_type || remoteUrl)
+  const typeHint = input.type || input.media_type || input.source_url || input.url || input.media_url
+  const type: MediaType = normalizeMediaType(typeHint)
+  const remoteUrl =
+    type === 'url'
+      ? input.url || input.source_url || input.media_url || (mediaId ? mediaUrlMap[mediaId] : undefined)
+      : input.media_url || input.url || (mediaId ? mediaUrlMap[mediaId] : undefined)
   const displayMs =
     Number(input.display_ms ?? input.displayMs ?? input.duration_ms ?? input.durationMs ?? 10000) || 10000
   const fit = normalizeFit(input.fit || input.fit_mode)
@@ -88,7 +93,18 @@ function normalizeItem(input: any, mediaUrlMap: SnapshotMediaUrlMap): TimelineIt
     muted,
     loop,
     sha256: input.sha256,
-    meta: input.meta,
+    meta: {
+      ...(input.meta && typeof input.meta === 'object' ? input.meta : {}),
+      source_url: typeof input.source_url === 'string' ? input.source_url : undefined,
+      fallback_url:
+        typeof input.fallback_url === 'string'
+          ? input.fallback_url
+          : type === 'url' && typeof input.media_url === 'string'
+            ? input.media_url
+            : undefined,
+      name: typeof input.name === 'string' ? input.name : undefined,
+      source_content_type: typeof input.source_content_type === 'string' ? input.source_content_type : undefined,
+    },
     transitionDurationMs,
   }
 }
@@ -108,7 +124,8 @@ function extractMediaUrlMap(payload: DeviceSnapshot): SnapshotMediaUrlMap {
   if (Array.isArray(payload.media)) {
     for (const entry of payload.media) {
       const mediaId = entry.media_id || entry.mediaId
-      const url = entry.url || entry.media_url
+      const type = normalizeMediaType(entry.type || entry.media_type)
+      const url = type === 'url' ? entry.url || entry.source_url || entry.media_url : entry.url || entry.media_url
       if (mediaId && url) {
         map[mediaId] = url
       }

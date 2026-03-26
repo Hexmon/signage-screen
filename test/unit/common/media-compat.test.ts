@@ -49,6 +49,22 @@ describe('Media Compatibility', () => {
 
     const csv = checkMediaCompatibility({ type: 'DOCUMENT', source_content_type: 'text/csv' })
     expect(csv.status).to.equal('ACCEPTED_BUT_NOT_SUPPORTED_YET')
+
+    const xlsx = checkMediaCompatibility({
+      type: 'DOCUMENT',
+      source_content_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    expect(xlsx.status).to.equal('ACCEPTED_BUT_NOT_SUPPORTED_YET')
+  })
+
+  it('should allow webpage playback items', () => {
+    const viaType = checkMediaCompatibility({ type: 'WEBPAGE', url: 'https://status.example.com' })
+    expect(viaType.status).to.equal('PLAYABLE_NOW')
+    expect(viaType.kind).to.equal('WEBPAGE')
+
+    const viaUrlType = checkMediaCompatibility({ type: 'url', url: 'https://status.example.com' })
+    expect(viaUrlType.status).to.equal('PLAYABLE_NOW')
+    expect(viaUrlType.kind).to.equal('WEBPAGE')
   })
 
   it('should reject unknown extensions', () => {

@@ -8,7 +8,7 @@ import { getHttpClient } from '../network/http-client'
 
 const logger = getLogger('settings-client')
 
-const VALID_MEDIA_TYPES: DefaultMediaType[] = ['IMAGE', 'VIDEO', 'DOCUMENT']
+const VALID_MEDIA_TYPES: DefaultMediaType[] = ['IMAGE', 'VIDEO', 'DOCUMENT', 'WEBPAGE']
 
 function normalizeMediaItem(input: any): DefaultMediaItem | null {
   if (!input || typeof input !== 'object') {
@@ -21,6 +21,8 @@ function normalizeMediaItem(input: any): DefaultMediaItem | null {
     ? (input.type as DefaultMediaType)
     : undefined
   const mediaUrl = typeof input.media_url === 'string' ? input.media_url : undefined
+  const sourceUrl = typeof input.source_url === 'string' ? input.source_url : undefined
+  const fallbackMediaUrl = typeof input.fallback_media_url === 'string' ? input.fallback_media_url : undefined
   const sourceContentType = typeof input.source_content_type === 'string' ? input.source_content_type : undefined
 
   if (!id || !type || !mediaUrl) {
@@ -32,6 +34,8 @@ function normalizeMediaItem(input: any): DefaultMediaItem | null {
     name,
     type,
     media_url: mediaUrl,
+    source_url: sourceUrl,
+    fallback_media_url: fallbackMediaUrl,
     source_content_type: sourceContentType,
   }
 }

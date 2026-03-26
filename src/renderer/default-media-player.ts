@@ -17,10 +17,20 @@ type DisposableDefaultMediaNode = {
   pause?: () => void
   removeAttribute?: (name: string) => void
   load?: () => void
+  stop?: () => void
   querySelectorAll?: (selector: string) => ArrayLike<DisposableDefaultMediaNode>
   parentElement?: { removeChild?: (child: DisposableDefaultMediaNode) => void } | null
   remove?: () => void
   src?: string
+}
+
+type EmbeddedWebviewElement = HTMLElement & {
+  src: string
+  stop?: () => void
+  setAudioMuted?: (muted: boolean) => void
+  loadURL?: (url: string) => void
+  addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void
+  executeJavaScript?: (code: string, userGesture?: boolean) => Promise<unknown>
 }
 
 function teardownDefaultMediaNode(node: DisposableDefaultMediaNode | null | undefined): void {
@@ -50,6 +60,12 @@ function teardownDefaultMediaNode(node: DisposableDefaultMediaNode | null | unde
 
   try {
     node.load?.()
+  } catch {
+    // ignore inert teardown failures
+  }
+
+  try {
+    node.stop?.()
   } catch {
     // ignore inert teardown failures
   }
@@ -201,6 +217,9 @@ export class DefaultMediaPlayer {
       case 'DOCUMENT':
         element = this.renderDocument(media)
         break
+      case 'WEBPAGE':
+        element = this.renderWebpage(media)
+        break
       default:
         element = this.renderUnsupported(media)
         break
@@ -276,6 +295,131 @@ export class DefaultMediaPlayer {
     }
 
     return this.renderUnsupported(media)
+  }
+
+  private renderWebpage(media: DefaultMediaItem): HTMLElement {
+    const liveUrl = typeof media.source_url === 'string' ? media.source_url : undefined
+    const fallbackUrl = media.local_url || media.fallback_media_url || media.media_url
+
+    if (!liveUrl) {
+      if (fallbackUrl) {
+        return this.renderImage({
+          ...media,
+          media_url: fallbackUrl,
+        })
+      }
+
+      return this.renderUnsupported(media)
+    }
+
+    const container = document.createElement('div')
+    container.style.position = 'absolute'
+    container.style.top = '0'
+    container.style.left = '0'
+    container.style.width = '100%'
+    container.style.height = '100%'
+    container.style.background = '#000'
+    container.style.overflow = 'hidden'
+
+    const fallbackImageSrc = fallbackUrl
+    const fallbackImage = fallbackImageSrc ? document.createElement('img') : null
+    if (fallbackImage && fallbackImageSrc) {
+      fallbackImage.src = fallbackImageSrc
+      fallbackImage.style.position = 'absolute'
+      fallbackImage.style.top = '0'
+      fallbackImage.style.left = '0'
+      fallbackImage.style.width = '100%'
+      fallbackImage.style.height = '100%'
+      fallbackImage.style.objectFit = 'contain'
+      fallbackImage.style.background = '#000'
+      fallbackImage.style.zIndex = '0'
+      container.appendChild(fallbackImage)
+    }
+
+    const webview = document.createElement('webview') as EmbeddedWebviewElement
+    webview.style.position = 'absolute'
+    webview.style.top = '0'
+    webview.style.left = '0'
+    webview.style.width = '100%'
+    webview.style.height = '100%'
+    webview.style.opacity = fallbackImage ? '0' : '1'
+    webview.style.transition = 'opacity 180ms ease-in-out'
+    webview.style.zIndex = '1'
+    webview.src = liveUrl
+    webview.setAttribute('allowpopups', 'false')
+
+    const muteAndLock = () => {
+      try {
+        webview.setAudioMuted?.(true)
+      } catch {
+        // ignore webview audio mute failures
+      }
+
+      void webview
+        .executeJavaScript?.(
+          `
+            (() => {
+              const apply = () => {
+                document.querySelectorAll('video, audio').forEach((node) => {
+                  try {
+                    node.muted = true;
+                    node.volume = 0;
+                    node.autoplay = false;
+                  } catch {}
+                });
+              };
+              apply();
+              const observer = new MutationObserver(() => apply());
+              observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
+              window.open = () => null;
+            })();
+          `,
+          false
+        )
+        .catch(() => {
+          // ignore live page script-injection failures
+        })
+    }
+
+    const showFallback = (reason: string) => {
+      webview.style.opacity = '0'
+      if (fallbackImage) {
+        fallbackImage.style.display = 'block'
+        this.showStatus('Using cached webpage preview')
+        this.scheduleRefresh(reason)
+        this.markHealthy()
+        return
+      }
+
+      this.handlePlaybackError(reason)
+    }
+
+    webview.addEventListener('dom-ready', () => {
+      muteAndLock()
+      webview.style.opacity = '1'
+      if (fallbackImage) {
+        fallbackImage.style.display = 'none'
+      }
+      this.markHealthy()
+    })
+
+    webview.addEventListener('did-fail-load', () => {
+      showFallback('webpage-error')
+    })
+
+    webview.addEventListener('did-navigate', ((event: Event) => {
+      const nextUrl = String((event as unknown as { url?: string }).url || '')
+      if (nextUrl && nextUrl !== liveUrl) {
+        try {
+          webview.loadURL?.(liveUrl)
+        } catch {
+          showFallback('webpage-redirect')
+        }
+      }
+    }) as EventListener)
+
+    container.appendChild(webview)
+    return container
   }
 
   private renderUnsupported(media: DefaultMediaItem): HTMLElement {
