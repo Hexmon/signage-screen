@@ -89,10 +89,12 @@ export class Logger {
   private logDir: string
   private currentLogFile: string
   private rotationTimer?: NodeJS.Timeout
+  private readonly isNodeCliRuntime: boolean
 
   constructor(name: string, logDir?: string) {
     const config = getConfigManager().getConfig()
     this.logDir = logDir || path.join(config.cache.path, 'logs')
+    this.isNodeCliRuntime = !process.versions.electron
 
     // Ensure log directory exists
     if (!fs.existsSync(this.logDir)) {
@@ -103,7 +105,6 @@ export class Logger {
 
     // Determine if we should also log to console (development mode)
     const isDevelopment = process.env['NODE_ENV'] === 'development'
-
     // Create pino logger configuration
     const pinoConfig = {
       name,
@@ -133,7 +134,7 @@ export class Logger {
         pinoConfig,
         pino.destination({
           dest: this.currentLogFile,
-          sync: false,
+          sync: this.isNodeCliRuntime,
           mkdir: true,
         })
       )
@@ -149,12 +150,17 @@ export class Logger {
   }
 
   private setupRotation(): void {
+    if (this.isNodeCliRuntime) {
+      return
+    }
+
     const config = getConfigManager().getConfig()
     const rotationIntervalMs = config.log.rotationIntervalHours * 60 * 60 * 1000
 
     this.rotationTimer = setInterval(() => {
       this.rotate()
     }, rotationIntervalMs)
+    this.rotationTimer.unref?.()
   }
 
   private rotate(): void {

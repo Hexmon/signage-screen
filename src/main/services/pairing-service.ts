@@ -1,7 +1,7 @@
 import * as os from 'os'
-import { app, screen } from 'electron'
 import { getLogger } from '../../common/logger'
 import { getConfigManager } from '../../common/config'
+import { getElectronApp, getElectronScreen } from '../../common/platform-paths'
 import {
   DeviceInfo,
   PairingCodeRequest,
@@ -72,7 +72,7 @@ export class PairingService {
       hostname: os.hostname(),
       platform: os.platform(),
       arch: os.arch(),
-      appVersion: typeof app?.getVersion === 'function' ? app.getVersion() : 'unknown',
+      appVersion: typeof getElectronApp()?.getVersion === 'function' ? getElectronApp()!.getVersion() : 'unknown',
       electronVersion: process.versions.electron || 'unknown',
       nodeVersion: process.versions.node,
     }
@@ -358,7 +358,8 @@ export class PairingService {
   }
 
   private buildPairingCodeRequest(overrides: Partial<PairingCodeRequest> = {}): PairingCodeRequest {
-    const display = typeof screen?.getPrimaryDisplay === 'function' ? screen.getPrimaryDisplay() : undefined
+    const electronScreen = getElectronScreen()
+    const display = typeof electronScreen?.getPrimaryDisplay === 'function' ? electronScreen.getPrimaryDisplay() : undefined
     const width = display?.workAreaSize.width ?? 0
     const height = display?.workAreaSize.height ?? 0
     const hasValidDimensions = Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0

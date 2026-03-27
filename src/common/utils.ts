@@ -5,6 +5,7 @@
 import * as crypto from 'crypto'
 import * as fs from 'fs'
 import * as path from 'path'
+import * as os from 'os'
 
 /**
  * Calculate SHA-256 hash of a file
@@ -254,6 +255,48 @@ export function ensureDir(dirPath: string, mode: number = 0o755): void {
   if (!fs.existsSync(dirPath)) {
     fs.mkdirSync(dirPath, { recursive: true, mode })
   }
+}
+
+/**
+ * Find an executable in PATH or confirm an absolute executable path exists.
+ */
+export function findExecutable(command: string): string | null {
+  if (!command) {
+    return null
+  }
+
+  const isAbsoluteOrRelativePath =
+    command.includes(path.sep) || (path.sep === '\\' && command.includes('/')) || path.isAbsolute(command)
+
+  const candidates = new Set<string>()
+  if (isAbsoluteOrRelativePath) {
+    candidates.add(path.resolve(command))
+  } else {
+    const pathEntries = (process.env['PATH'] || '').split(path.delimiter).filter(Boolean)
+    const extensions =
+      os.platform() === 'win32'
+        ? (process.env['PATHEXT'] || '.EXE;.CMD;.BAT;.COM')
+            .split(';')
+            .filter(Boolean)
+        : ['']
+
+    for (const entry of pathEntries) {
+      for (const extension of extensions) {
+        candidates.add(path.join(entry, `${command}${extension}`))
+      }
+    }
+  }
+
+  for (const candidate of candidates) {
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK)
+      return candidate
+    } catch {
+      // try next candidate
+    }
+  }
+
+  return null
 }
 
 /**

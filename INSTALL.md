@@ -1,5 +1,7 @@
 # Installation Instructions
 
+> Note: the current supported production model is a Windows or Ubuntu desktop-session install. This document still contains the older Ubuntu/systemd workflow for legacy environments. For the current support matrix and runtime defaults, start with [README.md](./README.md) and [PLATFORM_SUPPORT.md](./PLATFORM_SUPPORT.md).
+
 ## Prerequisites
 
 ### System Requirements
@@ -390,4 +392,3 @@ For optimal performance:
 - Monitor system resources
 - Adjust cache size based on content needs
 - Use appropriate bandwidth budget settings
-

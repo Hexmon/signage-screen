@@ -15,12 +15,15 @@ import { getConfigManager } from '../common/config'
 import { getLogger } from '../common/logger'
 import { ExponentialBackoff } from '../common/utils'
 import type { AppConfig } from '../common/types'
+import { parseOperatorCommand, runOperatorCommand } from './cli'
 import { getRuntimeMode, getRuntimeWindowPolicy } from './runtime-mode'
+import { ensureAutostartRegistration } from './services/autostart'
 
 console.log('Initializing logger...')
 const logger = getLogger('main')
 console.log('Logger initialized')
 const config = getConfigManager()
+const operatorCommand = parseOperatorCommand(process.argv)
 
 config.onChange((nextConfig) => {
   applyConfigToNetworkClients(nextConfig)
@@ -28,12 +31,12 @@ config.onChange((nextConfig) => {
 })
 
 // Single instance lock
-const gotTheLock = app.requestSingleInstanceLock()
+const gotTheLock = operatorCommand ? true : app.requestSingleInstanceLock()
 
 if (!gotTheLock) {
   logger.warn('Another instance is already running. Exiting.')
   app.quit()
-} else {
+} else if (!operatorCommand) {
   app.on('second-instance', () => {
     logger.warn('Attempted to start second instance')
     // Focus the existing window if it exists
@@ -546,8 +549,18 @@ async function cleanup(): Promise<void> {
 
 app.on('ready', async () => {
   logger.info({ version: app.getVersion(), electron: process.versions.electron }, 'Application starting')
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('com.hexmon.signage.player')
+  }
 
   try {
+    if (operatorCommand) {
+      const exitCode = await runOperatorCommand(operatorCommand)
+      app.exit(exitCode)
+      return
+    }
+
+    await ensureAutostartRegistration()
     configureWebpageSession()
     setupIPCHandlers()
     createWindow()
@@ -573,8 +586,7 @@ app.on('web-contents-created', (_event, contents) => {
 })
 
 app.on('window-all-closed', () => {
-  // On Linux, keep the app running even if all windows are closed
-  // This is important for unattended signage runtime
+  // Keep the process alive so unattended signage playback can recover its window.
   logger.info('All windows closed, but keeping app running')
 })
 
@@ -586,6 +598,9 @@ app.on('activate', () => {
 })
 
 app.on('before-quit', async (event) => {
+  if (operatorCommand) {
+    return
+  }
   event.preventDefault()
   await cleanup()
   app.exit(0)

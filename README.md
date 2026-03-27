@@ -1,6 +1,8 @@
 # HexmonSignage Player
 
-Production-grade Ubuntu Electron digital signage player with offline-first architecture, mTLS authentication, and comprehensive telemetry.
+Production-grade Windows and Ubuntu Electron digital signage player with offline-first architecture, mTLS authentication, and comprehensive telemetry.
+
+See [PLATFORM_SUPPORT.md](./PLATFORM_SUPPORT.md) for the current production and development support matrix.
 
 ## Features
 
@@ -63,15 +65,21 @@ src/
 ## Installation
 
 ### Prerequisites
-- Ubuntu 20.04 LTS or later
-- Node.js 18+ and npm 9+
+- Windows 10/11 desktop session or Ubuntu 22.04+ desktop session
+- Node.js 18+ and npm 9+ for source builds
 - 10GB+ free disk space for cache
 
-### From .deb Package
+### From Package
+Windows:
+```powershell
+HexmonSignage-Player-Setup.exe
+```
+
+Ubuntu:
 ```bash
 sudo dpkg -i hexmon-signage-player_1.0.0_amd64.deb
-sudo systemctl enable hexmon-player
-sudo systemctl start hexmon-player
+# or run the AppImage directly
+./HexmonSignage-Player-1.0.0.AppImage
 ```
 
 ### From Source
@@ -80,16 +88,20 @@ git clone https://github.com/hexmon/signage-player.git
 cd signage-player
 npm install
 npm run build
-npm run package:deb
+npm run package:linux
+# or
+npm run package:win
 ```
 
 ## Configuration
 
 Configuration is loaded from (in order of precedence):
 1. Environment variables (`HEXMON_*`)
-2. `/etc/hexmon/config.json`
-3. `~/.config/hexmon/config.json`
+2. The configured `HEXMON_CONFIG_PATH` / `SIGNAGE_CONFIG_PATH`
+3. The per-user Electron app-data directory
 4. Built-in defaults
+
+On Linux, legacy `/etc/hexmon`, `/var/lib/hexmon`, and `/var/cache/hexmon` state is imported once into the app-data runtime root when no explicit override paths are set.
 
 ### Example Configuration
 
@@ -103,14 +115,10 @@ Configuration is loaded from (in order of precedence):
   },
   "mtls": {
     "enabled": true,
-    "certPath": "/var/lib/hexmon/certs/client.crt",
-    "keyPath": "/var/lib/hexmon/certs/client.key",
-    "caPath": "/var/lib/hexmon/certs/ca.crt",
     "autoRenew": true,
     "renewBeforeDays": 30
   },
   "cache": {
-    "path": "/var/cache/hexmon",
     "maxBytes": 10737418240,
     "prefetchConcurrency": 3,
     "bandwidthBudgetMbps": 50
@@ -187,9 +195,14 @@ On first run, the player displays a pairing screen:
 ### Manual Pairing
 
 ```bash
+# Choose a writable cert directory. The packaged player defaults to the
+# per-user runtime root, or you can set HEXMON_MTLS_CERT_DIR explicitly.
+export HEXMON_MTLS_CERT_DIR="${HOME}/.config/HexmonSignage Player/certs"
+mkdir -p "${HEXMON_MTLS_CERT_DIR}"
+
 # Generate CSR
-openssl ecparam -name prime256v1 -genkey -noout -out /var/lib/hexmon/certs/client.key
-openssl req -new -key /var/lib/hexmon/certs/client.key -out /tmp/client.csr
+openssl ecparam -name prime256v1 -genkey -noout -out "${HEXMON_MTLS_CERT_DIR}/client.key"
+openssl req -new -key "${HEXMON_MTLS_CERT_DIR}/client.key" -out /tmp/client.csr
 
 # Submit pairing request
 curl -X POST https://api.hexmon.local/v1/device-pairing/complete \
@@ -197,9 +210,9 @@ curl -X POST https://api.hexmon.local/v1/device-pairing/complete \
   -d '{"pairing_code":"ABC123","csr":"<CSR_CONTENT>"}'
 
 # Save certificate
-echo "<CERT_CONTENT>" > /var/lib/hexmon/certs/client.crt
-echo "<CA_CONTENT>" > /var/lib/hexmon/certs/ca.crt
-chmod 600 /var/lib/hexmon/certs/*
+echo "<CERT_CONTENT>" > "${HEXMON_MTLS_CERT_DIR}/client.crt"
+echo "<CA_CONTENT>" > "${HEXMON_MTLS_CERT_DIR}/ca.crt"
+chmod 600 "${HEXMON_MTLS_CERT_DIR}"/*
 ```
 
 ## Usage
@@ -207,17 +220,26 @@ chmod 600 /var/lib/hexmon/certs/*
 ### Starting the Player
 
 ```bash
-# Via systemd (recommended)
-sudo systemctl start hexmon-player
-
-# Manually
+# Packaged install
 hexmon-signage-player
+
+# Operator commands
+hexmon-signage-player doctor
+hexmon-signage-player pair request
+hexmon-signage-player pair submit ABC123
+hexmon-signage-player clear-cache
+hexmon-signage-player collect-logs
 
 # Development mode
 npm run start:dev
 ```
 
 `npm run start:dev` defaults the player to `runtime.mode=dev` unless a config file explicitly overrides it.
+
+Autostart is managed at the user-session level:
+
+- Windows: login item registration
+- Ubuntu: XDG autostart desktop entry
 
 ### Health Check
 

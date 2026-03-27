@@ -8,6 +8,7 @@ import { exec } from 'child_process'
 import { promisify } from 'util'
 import { powerSaveBlocker } from 'electron'
 import { getLogger } from '../../common/logger'
+import { findExecutable } from '../../common/utils'
 
 const execAsync = promisify(exec)
 const logger = getLogger('power-manager')
@@ -25,15 +26,40 @@ export interface PowerSchedule {
   enabled: boolean
 }
 
+export interface PowerCapabilities {
+  platform: NodeJS.Platform
+  dpmsControl: boolean
+  preventBlanking: boolean
+  displayEnumeration: boolean
+}
+
 export class PowerManager {
   private isLinux: boolean
+  private readonly xsetPath: string | null
   private powerSaveBlockerId?: number
   private scheduleTimer?: NodeJS.Timeout
   private currentSchedule?: PowerSchedule
 
   constructor() {
     this.isLinux = os.platform() === 'linux'
-    logger.info({ platform: os.platform(), isLinux: this.isLinux }, 'Power manager initialized')
+    this.xsetPath = this.isLinux ? findExecutable('xset') : null
+    logger.info(
+      {
+        platform: os.platform(),
+        isLinux: this.isLinux,
+        xsetAvailable: Boolean(this.xsetPath),
+      },
+      'Power manager initialized'
+    )
+  }
+
+  getCapabilities(): PowerCapabilities {
+    return {
+      platform: os.platform(),
+      dpmsControl: Boolean(this.xsetPath),
+      preventBlanking: Boolean(this.xsetPath),
+      displayEnumeration: true,
+    }
   }
 
   /**
@@ -65,18 +91,18 @@ export class PowerManager {
    * Prevent screen blanking
    */
   private async preventScreenBlanking(): Promise<void> {
-    if (!this.isLinux) {
+    if (!this.isLinux || !this.xsetPath) {
       logger.debug('Screen blanking prevention not available on this platform')
       return
     }
 
     try {
       // Disable screen saver
-      await execAsync('xset s off')
+      await execAsync(`${this.xsetPath} s off`)
       logger.info('Screen saver disabled')
 
       // Disable screen blanking
-      await execAsync('xset s noblank')
+      await execAsync(`${this.xsetPath} s noblank`)
       logger.info('Screen blanking disabled')
     } catch (error) {
       logger.warn({ error }, 'Failed to prevent screen blanking (xset may not be available)')
@@ -87,13 +113,13 @@ export class PowerManager {
    * Disable DPMS (Display Power Management Signaling)
    */
   private async disableDPMS(): Promise<void> {
-    if (!this.isLinux) {
+    if (!this.isLinux || !this.xsetPath) {
       logger.debug('DPMS control not available on this platform')
       return
     }
 
     try {
-      await execAsync('xset -dpms')
+      await execAsync(`${this.xsetPath} -dpms`)
       logger.info('DPMS disabled')
     } catch (error) {
       logger.warn({ error }, 'Failed to disable DPMS (xset may not be available)')
@@ -104,13 +130,13 @@ export class PowerManager {
    * Enable DPMS
    */
   async enableDPMS(): Promise<void> {
-    if (!this.isLinux) {
+    if (!this.isLinux || !this.xsetPath) {
       logger.debug('DPMS control not available on this platform')
       return
     }
 
     try {
-      await execAsync('xset +dpms')
+      await execAsync(`${this.xsetPath} +dpms`)
       logger.info('DPMS enabled')
     } catch (error) {
       logger.error({ error }, 'Failed to enable DPMS')
@@ -158,14 +184,14 @@ export class PowerManager {
   async turnDisplayOn(): Promise<void> {
     logger.info('Turning display on')
 
-    if (!this.isLinux) {
+    if (!this.isLinux || !this.xsetPath) {
       logger.debug('Display control not available on this platform')
       return
     }
 
     try {
       // Force display on using xset
-      await execAsync('xset dpms force on')
+      await execAsync(`${this.xsetPath} dpms force on`)
       logger.info('Display turned on')
     } catch (error) {
       logger.error({ error }, 'Failed to turn display on')
@@ -179,14 +205,14 @@ export class PowerManager {
   async turnDisplayOff(): Promise<void> {
     logger.info('Turning display off')
 
-    if (!this.isLinux) {
+    if (!this.isLinux || !this.xsetPath) {
       logger.debug('Display control not available on this platform')
       return
     }
 
     try {
       // Force display off using xset
-      await execAsync('xset dpms force off')
+      await execAsync(`${this.xsetPath} dpms force off`)
       logger.info('Display turned off')
     } catch (error) {
       logger.error({ error }, 'Failed to turn display off')
@@ -198,45 +224,21 @@ export class PowerManager {
    * Get display information
    */
   async getDisplayInfo(): Promise<DisplayInfo[]> {
-    if (!this.isLinux) {
-      logger.debug('Display detection not available on this platform')
-      return []
-    }
-
     try {
-      const { stdout } = await execAsync('xrandr --query')
-      const displays: DisplayInfo[] = []
-
-      // Parse xrandr output
-      const lines = stdout.split('\n')
-      for (const line of lines) {
-        const match = line.match(/^(\S+)\s+(connected|disconnected)\s+(.*)/)
-        if (match) {
-          const [, name, status, rest] = match
-          if (!name) continue
-
-          const connected = status === 'connected'
-
-          const display: DisplayInfo = {
-            name,
-            connected,
-          }
-
-          // Extract resolution if connected
-          if (connected && rest) {
-            const resMatch = rest.match(/(\d+x\d+\+\d+\+\d+)/)
-            if (resMatch) {
-              display.resolution = resMatch[1]
-            }
-
-            // Check if primary
-            display.primary = rest.includes('primary')
-          }
-
-          displays.push(display)
-        }
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { screen } = require('electron') as typeof import('electron')
+      if (!screen || typeof screen.getAllDisplays !== 'function') {
+        logger.debug('Electron screen API not available')
+        return []
       }
 
+      const primaryId = screen.getPrimaryDisplay()?.id
+      const displays = screen.getAllDisplays().map((display) => ({
+        name: display.label || `Display ${display.id}`,
+        connected: true,
+        resolution: `${display.bounds.width}x${display.bounds.height}`,
+        primary: display.id === primaryId,
+      }))
       logger.debug({ displays }, 'Display information retrieved')
       return displays
     } catch (error) {
@@ -391,4 +393,3 @@ export function getPowerManager(): PowerManager {
   }
   return powerManager
 }
-

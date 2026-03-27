@@ -1,7 +1,7 @@
 {
   "name": "hexmon-signage-player",
   "version": "1.0.0",
-  "description": "Production-grade Ubuntu Electron digital signage player for HexmonSignage",
+  "description": "Production-grade Windows and Ubuntu Electron digital signage player for HexmonSignage",
   "main": "dist/main/main/index.js",
   "author": "HexmonSignage",
   "license": "Apache-2.0",
@@ -23,7 +23,15 @@
     "start:dev:win": "npm run start:dev",
     "start:dev:mac": "npm run start:dev",
     "start:dev:linux": "npm run start:dev",
-    "package": "electron-builder --linux",
+    "player:cli": "node -r ts-node/register src/main/cli-runner.ts",
+    "doctor": "npm run player:cli -- doctor",
+    "clear-cache": "npm run player:cli -- clear-cache",
+    "collect-logs": "npm run player:cli -- collect-logs",
+    "pair:request": "npm run player:cli -- pair request",
+    "package": "electron-builder --linux --win",
+    "package:linux": "electron-builder --linux",
+    "package:win": "electron-builder --win nsis",
+    "package:all": "electron-builder --linux --win",
     "package:deb": "electron-builder --linux deb",
     "package:appimage": "electron-builder --linux AppImage",
     "lint": "eslint . --ext .ts,.tsx",
@@ -111,14 +119,24 @@
       "category": "Utility",
       "maintainer": "HexmonSignage <support@hexmon.com>",
       "vendor": "HexmonSignage",
-      "synopsis": "Digital signage player for Ubuntu",
-      "description": "Production-grade digital signage player with offline-first architecture, mTLS authentication, and comprehensive telemetry",
+      "synopsis": "Digital signage player for Ubuntu desktop sessions",
+      "description": "Production-grade digital signage player with offline-first architecture, mTLS authentication, autostart registration, and comprehensive telemetry",
       "desktop": {
         "Name": "HexmonSignage Player",
         "Comment": "Digital Signage Player",
         "Categories": "Utility;",
         "Terminal": false
       }
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
     },
     "deb": {
       "depends": [
@@ -128,9 +146,7 @@
         "libappindicator1",
         "libxtst6",
         "libnss3"
-      ],
-      "afterInstall": "scripts/postinstall.sh",
-      "afterRemove": "scripts/postremove.sh"
+      ]
     }
   },
   "engines": {

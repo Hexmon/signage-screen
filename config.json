@@ -7,14 +7,10 @@
   },
   "mtls": {
     "enabled": false,
-    "certPath": "/var/lib/hexmon/certs/client.crt",
-    "keyPath": "/var/lib/hexmon/certs/client.key",
-    "caPath": "/var/lib/hexmon/certs/ca.crt",
     "autoRenew": true,
     "renewBeforeDays": 30
   },
   "cache": {
-    "path": "/var/cache/hexmon",
     "maxBytes": 10737418240,
     "prefetchConcurrency": 3,
     "bandwidthBudgetMbps": 50

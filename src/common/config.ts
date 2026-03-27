@@ -4,10 +4,9 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
-import * as os from 'os'
 import { EventEmitter } from 'events'
 import type { AppConfig, RuntimeMode } from './types'
-import type { App as ElectronApp } from 'electron'
+import { importLegacyLinuxRuntimeState, resolveRuntimePaths, type RuntimePaths } from './platform-paths'
 
 const RUNTIME_MODES: RuntimeMode[] = ['dev', 'qa', 'production']
 const LEGACY_COMMAND_POLL_MS = 30000
@@ -17,52 +16,30 @@ export class ConfigManager {
   private config: AppConfig
   private readonly configPath: string
   private readonly defaults: AppConfig
+  private readonly runtimePaths: RuntimePaths
   private readonly emitter = new EventEmitter()
 
   constructor(configPath?: string) {
+    this.runtimePaths = resolveRuntimePaths()
+    if (!configPath) {
+      importLegacyLinuxRuntimeState(this.runtimePaths)
+    }
     this.configPath = configPath || this.getDefaultConfigPath()
     this.defaults = this.buildDefaultConfig()
     this.config = this.loadConfig()
   }
 
   private getDefaultConfigPath(): string {
-    const override = process.env['SIGNAGE_CONFIG_PATH'] || process.env['HEXMON_CONFIG_PATH']
-    if (override) return override
-
-    const appInstance = this.getElectronApp()
-    if (appInstance) {
-      return path.join(appInstance.getPath('userData'), 'config.json')
-    }
-
-    const homeDir = os.homedir() || os.tmpdir()
-    return path.join(homeDir, '.config', 'hexmon', 'config.json')
-  }
-
-  private getElectronApp(): ElectronApp | undefined {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const electron = require('electron') as typeof import('electron')
-      if (electron?.app && typeof electron.app.getPath === 'function') {
-        return electron.app
-      }
-    } catch {
-      return undefined
-    }
-    return undefined
+    return this.runtimePaths.configPath
   }
 
   private buildDefaultConfig(): AppConfig {
-    const isDevelopment = process.env['NODE_ENV'] === 'development'
-    const homeDir = os.homedir() || os.tmpdir()
     const apiBase = this.buildDefaultApiBase()
     const wsUrl = this.buildDefaultWsUrl(apiBase)
     const runtimeMode = this.buildDefaultRuntimeMode()
 
-    const defaultCachePath =
-      process.env['HEXMON_CACHE_PATH'] || (isDevelopment ? path.join(homeDir, '.hexmon', 'cache') : '/var/cache/hexmon')
-
-    const defaultCertDir =
-      process.env['HEXMON_MTLS_CERT_DIR'] || (isDevelopment ? path.join(homeDir, '.hexmon', 'certs') : '/var/lib/hexmon/certs')
+    const defaultCachePath = process.env['HEXMON_CACHE_PATH'] || this.runtimePaths.cachePath
+    const defaultCertDir = process.env['HEXMON_MTLS_CERT_DIR'] || this.runtimePaths.certDir
 
     const defaultCertPath = process.env['HEXMON_MTLS_CERT_PATH'] || path.join(defaultCertDir, 'client.crt')
     const defaultKeyPath = process.env['HEXMON_MTLS_KEY_PATH'] || path.join(defaultCertDir, 'client.key')
@@ -119,6 +96,13 @@ export class ConfigManager {
         nodeIntegration: process.env['HEXMON_SECURITY_NODE_INTEGRATION'] === 'true',
         sandbox: process.env['HEXMON_SECURITY_SANDBOX'] !== 'false',
       },
+    }
+  }
+
+  public getRuntimePaths(): RuntimePaths {
+    return {
+      ...this.runtimePaths,
+      legacyLinux: { ...this.runtimePaths.legacyLinux },
     }
   }
 
