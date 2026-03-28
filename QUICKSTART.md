@@ -5,7 +5,7 @@ This guide will help you get the HexmonSignage Player up and running quickly.
 ## Prerequisites
 
 - Ubuntu 20.04 LTS or later
-- Node.js 18+ and npm 9+
+- Node.js 20 LTS and npm 9+
 - 10GB+ free disk space
 
 ## Installation

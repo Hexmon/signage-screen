@@ -12,7 +12,7 @@
 - **Display**: 1920x1080 or higher recommended
 
 ### Software Requirements
-- Node.js 18+ and npm 9+
+- Node.js 20 LTS and npm 9+
 - Git (for development)
 
 ## Quick Install (From Package)

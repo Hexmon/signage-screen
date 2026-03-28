@@ -66,7 +66,7 @@ src/
 
 ### Prerequisites
 - Windows 10/11 desktop session or Ubuntu 22.04+ desktop session
-- Node.js 18+ and npm 9+ for source builds
+- Node.js 20 LTS and npm 9+ for source builds
 - 10GB+ free disk space for cache
 
 ### From Package
