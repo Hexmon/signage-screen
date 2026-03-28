@@ -47,3 +47,4 @@ The new primary runtime root is the Electron app-data directory.
 - Display power control remains Linux/X11-specific and degrades cleanly on Windows and Wayland.
 - Display enumeration now uses Electron APIs on all supported platforms.
 - Cache clearing and log collection are implemented in Node/Electron code and no longer depend on Linux shell tooling.
+- For the Ubuntu step-by-step install and verification flow, use [UBUNTU_SETUP.md](./UBUNTU_SETUP.md).

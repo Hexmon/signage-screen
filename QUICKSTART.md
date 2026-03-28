@@ -126,16 +126,15 @@ export class CertificateManager {
 Create `src/main/services/cache/cache-manager.ts`:
 
 ```typescript
-import Database from 'better-sqlite3'
 import { getLogger } from '../../../common/logger'
 import { CacheEntry, CacheStats } from '../../../common/types'
 
 export class CacheManager {
-  private db: Database.Database
+  private entries = new Map<string, CacheEntry>()
   private logger = getLogger('cache-manager')
 
   constructor(cachePath: string, maxBytes: number) {
-    // Initialize SQLite database
+    // Initialize file-backed cache index
     // Implementation needed...
   }
 
