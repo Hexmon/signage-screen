@@ -50,6 +50,7 @@ if (!gotTheLock) {
 let mainWindow: BrowserWindow | null = null
 const restartBackoff = new ExponentialBackoff(1000, 60000, 10)
 const WEBPAGE_PARTITION = 'persist:hexmon-webpage-playback'
+let lastBlockedInputLogAt = 0
 
 function isSafeWebpageUrl(url: string): boolean {
   try {
@@ -113,7 +114,24 @@ function applyRuntimeInteractionPolicy(window: BrowserWindow, appConfig: AppConf
     window.setMenuBarVisibility(false)
     window.removeMenu()
     window.webContents.setIgnoreMenuShortcuts(true)
-    window.webContents.on('before-input-event', (event) => {
+    window.webContents.on('before-input-event', (event, input) => {
+      const now = Date.now()
+      if (now - lastBlockedInputLogAt >= 5000) {
+        lastBlockedInputLogAt = now
+        logger.warn(
+          {
+            mode,
+            type: input.type,
+            key: input.key,
+            code: input.code,
+            control: input.control,
+            shift: input.shift,
+            alt: input.alt,
+            meta: input.meta,
+          },
+          'Blocked local input while runtime lock was active'
+        )
+      }
       event.preventDefault()
     })
   }
