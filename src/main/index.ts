@@ -14,7 +14,7 @@ import * as path from 'path'
 import { getConfigManager } from '../common/config'
 import { getLogger } from '../common/logger'
 import { ExponentialBackoff } from '../common/utils'
-import type { AppConfig } from '../common/types'
+import type { AppConfig, PlayerStatus } from '../common/types'
 import { parseOperatorCommand, runOperatorCommand } from './cli'
 import { getRuntimeMode, getRuntimeWindowPolicy } from './runtime-mode'
 import { ensureAutostartRegistration } from './services/autostart'
@@ -51,6 +51,28 @@ let mainWindow: BrowserWindow | null = null
 const restartBackoff = new ExponentialBackoff(1000, 60000, 10)
 const WEBPAGE_PARTITION = 'persist:hexmon-webpage-playback'
 let lastBlockedInputLogAt = 0
+let startupConfigError: string | null = null
+
+function buildStartupConfigStatus(): PlayerStatus {
+  return {
+    state: 'BOOT',
+    mode: 'offline',
+    online: false,
+    deviceId: config.getConfig().deviceId || undefined,
+    backendAvailable: false,
+    error:
+      startupConfigError ||
+      'Backend configuration is required before this player can pair or start playback.',
+  }
+}
+
+function broadcastPlayerStatus(status: PlayerStatus): void {
+  BrowserWindow.getAllWindows().forEach((win) => {
+    if (!win.isDestroyed()) {
+      win.webContents.send('player-status', status)
+    }
+  })
+}
 
 function isSafeWebpageUrl(url: string): boolean {
   try {
@@ -312,9 +334,12 @@ async function initializeServices(): Promise<void> {
     // Validate configuration
     const validation = config.validateConfig()
     if (!validation.valid) {
+      startupConfigError = 'Configuration required: ' + validation.errors.join(', ')
       logger.error({ errors: validation.errors }, 'Invalid configuration')
-      throw new Error('Invalid configuration: ' + validation.errors.join(', '))
+      broadcastPlayerStatus(buildStartupConfigStatus())
+      return
     }
+    startupConfigError = null
 
     await logBackendConnectivity()
 
@@ -464,6 +489,10 @@ function setupIPCHandlers(): void {
   })
 
   ipcMain.handle('get-player-status', async () => {
+    if (startupConfigError) {
+      return buildStartupConfigStatus()
+    }
+
     const { getPlayerFlow } = await import('./services/player-flow.js')
     return getPlayerFlow().getStatus()
   })

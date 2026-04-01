@@ -114,12 +114,33 @@ class PairingScreen {
   }
 
   private renderPairingState(status: PlayerStatus): void {
-    const showPairing = ['PAIRING_PENDING', 'PAIRING_CONFIRMED', 'PAIRING_COMPLETING'].includes(status.state)
+    const showConfigurationRequired =
+      status.state === 'BOOT' &&
+      typeof status.error === 'string' &&
+      status.error.toLowerCase().includes('configuration required')
+    const showPairing =
+      showConfigurationRequired ||
+      ['PAIRING_PENDING', 'PAIRING_CONFIRMED', 'PAIRING_COMPLETING'].includes(status.state)
 
     this.pairingScreenElement?.classList.toggle('hidden', !showPairing)
 
     if (!showPairing) {
       return
+    }
+
+    if (showConfigurationRequired) {
+      this.updatePairingCode('CONFIG')
+      this.updatePairingExpiry(undefined)
+      this.showStatus(status.error || 'Backend IP configuration is required before pairing.', 'error')
+      if (this.refreshButton) {
+        this.refreshButton.disabled = true
+      }
+      this.enableCompleteButton(false)
+      return
+    }
+
+    if (this.refreshButton) {
+      this.refreshButton.disabled = false
     }
 
     this.updatePairingCode(status.pairingCode || '------')

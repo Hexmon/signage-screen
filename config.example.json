@@ -1,6 +1,6 @@
 {
-  "apiBase": "http://192.168.0.4:3000",
-  "wsUrl": "ws://192.168.0.4:3000/ws",
+  "apiBase": "http://10.20.0.20:3000",
+  "wsUrl": "ws://10.20.0.20:3000/ws",
   "deviceId": "",
   "runtime": {
     "mode": "production"
@@ -39,10 +39,7 @@
   },
   "security": {
     "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'",
-    "allowedDomains": [
-      "hexmon.local",
-      "*.hexmon.com"
-    ],
+    "allowedDomains": [],
     "disableEval": true,
     "contextIsolation": true,
     "nodeIntegration": false,

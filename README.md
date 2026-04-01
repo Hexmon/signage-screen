@@ -2,7 +2,24 @@
 
 Production-grade Windows and Ubuntu Electron digital signage player with offline-first architecture, mTLS authentication, and comprehensive telemetry.
 
+For on-prem deployment and support, start with:
+
+- QA: [`../ops/onprem/QA_SETUP_GUIDE.md`](../ops/onprem/QA_SETUP_GUIDE.md)
+- Production: [`../ops/onprem/PRODUCTION_SETUP_GUIDE.md`](../ops/onprem/PRODUCTION_SETUP_GUIDE.md)
 See [PLATFORM_SUPPORT.md](./PLATFORM_SUPPORT.md) for the current production and development support matrix.
+
+Supported on-prem production contract:
+
+- player devices connect directly to `http://<backend-ip>:3000`
+- `wsUrl` should be `ws://<backend-ip>:3000/ws`
+- no DNS is required in the supported air-gapped profile
+- if no backend IP is configured in `qa` or `production`, the player now stays open and shows a configuration-required state instead of guessing an IP
+
+Runtime-bundle contract:
+
+- target player machines receive only generated installers and config templates
+- do not copy the player source tree to QA or production devices
+- the unified bundle builder stages prebuilt Windows and Ubuntu installers from `PLAYER_ARTIFACTS_DIR`
 
 ## Features
 
@@ -107,8 +124,8 @@ On Linux, legacy `/etc/hexmon`, `/var/lib/hexmon`, and `/var/cache/hexmon` state
 
 ```json
 {
-  "apiBase": "https://api.hexmon.local",
-  "wsUrl": "wss://api.hexmon.local/ws",
+  "apiBase": "http://10.20.0.20:3000",
+  "wsUrl": "ws://10.20.0.20:3000/ws",
   "deviceId": "",
   "runtime": {
     "mode": "production"
@@ -145,7 +162,7 @@ On Linux, legacy `/etc/hexmon`, `/var/lib/hexmon`, and `/var/cache/hexmon` state
   },
   "security": {
     "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'",
-    "allowedDomains": ["hexmon.local", "*.hexmon.com"],
+    "allowedDomains": [],
     "disableEval": true,
     "contextIsolation": true,
     "nodeIntegration": false,
@@ -165,8 +182,8 @@ On Linux, legacy `/etc/hexmon`, `/var/lib/hexmon`, and `/var/cache/hexmon` state
 All configuration options can be set via environment variables with the `HEXMON_` prefix:
 
 ```bash
-export HEXMON_API_BASE="https://api.hexmon.local"
-export HEXMON_WS_URL="wss://api.hexmon.local/ws"
+export HEXMON_API_BASE="http://10.20.0.20:3000"
+export HEXMON_WS_URL="ws://10.20.0.20:3000/ws"
 export HEXMON_DEVICE_ID="device-12345"
 export HEXMON_RUNTIME_MODE="qa"
 export HEXMON_MTLS_ENABLED="true"
@@ -187,7 +204,7 @@ On first run, the player displays a pairing screen:
 
 1. Enter the 6-character pairing code from the admin dashboard
 2. Player generates ECDSA (P-256) CSR locally
-3. Sends pairing request to backend: `POST /v1/device-pairing/complete`
+3. Sends pairing request to backend: `POST /api/v1/device-pairing/complete`
 4. Receives device certificate and configuration
 5. Stores certificate with 0600 permissions
 6. Switches to mTLS for all subsequent requests
@@ -205,7 +222,7 @@ openssl ecparam -name prime256v1 -genkey -noout -out "${HEXMON_MTLS_CERT_DIR}/cl
 openssl req -new -key "${HEXMON_MTLS_CERT_DIR}/client.key" -out /tmp/client.csr
 
 # Submit pairing request
-curl -X POST https://api.hexmon.local/v1/device-pairing/complete \
+curl -X POST http://10.20.0.20:3000/api/v1/device-pairing/complete \
   -H "Content-Type: application/json" \
   -d '{"pairing_code":"ABC123","csr":"<CSR_CONTENT>"}'
 
@@ -288,15 +305,15 @@ Press `Ctrl+Shift+D` to toggle the diagnostics overlay showing:
 
 ### Backend Endpoints
 
-- `POST /v1/device-pairing/complete` - Device pairing
-- `POST /v1/device/heartbeat` - Telemetry heartbeat
-- `POST /v1/device/proof-of-play` - Proof-of-play events
-- `POST /v1/device/screenshot` - Screenshot upload
-- `GET /v1/device/:deviceId/commands` - Poll for commands
-- `POST /v1/device/:deviceId/commands/:cmdId/ack` - Command acknowledgment
-- `GET /v1/device/:deviceId/schedule` - Fetch schedule snapshot
-- `GET /v1/device/:deviceId/emergency` - Check emergency override
-- `POST /v1/device/logs` - Upload log bundles
+- `POST /api/v1/device-pairing/complete` - Device pairing
+- `POST /api/v1/device/heartbeat` - Telemetry heartbeat
+- `POST /api/v1/device/proof-of-play` - Proof-of-play events
+- `POST /api/v1/device/screenshot` - Screenshot upload
+- `GET /api/v1/device/:deviceId/commands` - Poll for commands
+- `POST /api/v1/device/:deviceId/commands/:cmdId/ack` - Command acknowledgment
+- `GET /api/v1/device/:deviceId/schedule` - Fetch schedule snapshot
+- `GET /api/v1/device/:deviceId/emergency` - Check emergency override
+- `POST /api/v1/device/logs` - Upload log bundles
 
 ### WebSocket Messages
 

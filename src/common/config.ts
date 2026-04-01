@@ -34,9 +34,9 @@ export class ConfigManager {
   }
 
   private buildDefaultConfig(): AppConfig {
-    const apiBase = this.buildDefaultApiBase()
-    const wsUrl = this.buildDefaultWsUrl(apiBase)
     const runtimeMode = this.buildDefaultRuntimeMode()
+    const apiBase = this.buildDefaultApiBase(runtimeMode)
+    const wsUrl = this.buildDefaultWsUrl(apiBase, runtimeMode)
 
     const defaultCachePath = process.env['HEXMON_CACHE_PATH'] || this.runtimePaths.cachePath
     const defaultCertDir = process.env['HEXMON_MTLS_CERT_DIR'] || this.runtimePaths.certDir
@@ -119,21 +119,35 @@ export class ConfigManager {
     return RUNTIME_MODES.includes(value as RuntimeMode)
   }
 
-  private allowLocalhostFallback(): boolean {
-    return process.env['SIGNAGE_ALLOW_LOCALHOST'] === 'true' || process.env['NODE_ENV'] === 'development'
+  private allowLocalhostFallback(runtimeMode: RuntimeMode): boolean {
+    return (
+      process.env['SIGNAGE_ALLOW_LOCALHOST'] === 'true' ||
+      process.env['NODE_ENV'] === 'development' ||
+      runtimeMode === 'dev'
+    )
   }
 
-  private buildDefaultApiBase(): string {
-    const envApiBase = process.env['SIGNAGE_API_BASE_URL'] || process.env['API_BASE_URL']
+  private buildDefaultApiBase(runtimeMode: RuntimeMode): string {
+    const envApiBase =
+      process.env['SIGNAGE_API_BASE_URL'] ||
+      process.env['HEXMON_API_BASE'] ||
+      process.env['API_BASE_URL']
     const normalizedEnv = this.normalizeUrl(envApiBase)
     if (normalizedEnv) return normalizedEnv
-    return this.allowLocalhostFallback() ? 'http://localhost:3000' : 'http://192.168.0.4:3000'
+    return this.allowLocalhostFallback(runtimeMode) ? 'http://localhost:3000' : ''
   }
 
-  private buildDefaultWsUrl(apiBase: string): string {
+  private buildDefaultWsUrl(apiBase: string, runtimeMode: RuntimeMode): string {
+    const envWsUrl =
+      process.env['SIGNAGE_WS_URL'] ||
+      process.env['HEXMON_WS_URL'] ||
+      process.env['WS_URL']
+    const normalizedEnv = this.normalizeUrl(envWsUrl)
+    if (normalizedEnv) return normalizedEnv
+
     const derived = this.deriveWsUrl(apiBase)
     if (derived) return derived
-    return this.allowLocalhostFallback() ? 'ws://localhost:3000/ws' : 'ws://192.168.0.4:3000/ws'
+    return this.allowLocalhostFallback(runtimeMode) ? 'ws://localhost:3000/ws' : ''
   }
 
   private loadConfig(): AppConfig {
@@ -182,9 +196,9 @@ export class ConfigManager {
   }
 
   private normalizeConfig(config: AppConfig): AppConfig {
-    const apiBase = this.normalizeUrl(config.apiBase) || this.buildDefaultApiBase()
-    const wsUrl = this.normalizeUrl(config.wsUrl) || this.buildDefaultWsUrl(apiBase)
     const runtimeMode = this.getRuntimeModeOverride() || config.runtime.mode
+    const apiBase = this.normalizeUrl(config.apiBase) || this.buildDefaultApiBase(runtimeMode)
+    const wsUrl = this.normalizeUrl(config.wsUrl) || this.buildDefaultWsUrl(apiBase, runtimeMode)
     const commandPollMs =
       config.intervals.commandPollMs === LEGACY_COMMAND_POLL_MS
         ? LIVE_COMMAND_POLL_MS
@@ -252,7 +266,8 @@ export class ConfigManager {
   public updateConfig(updates: Partial<AppConfig>): AppConfig {
     const normalizedUpdates = { ...updates }
     if (updates?.apiBase && updates.wsUrl === undefined) {
-      normalizedUpdates.wsUrl = this.buildDefaultWsUrl(this.normalizeUrl(updates.apiBase))
+      const runtimeMode = updates.runtime?.mode || this.getRuntimeModeOverride() || this.config.runtime.mode
+      normalizedUpdates.wsUrl = this.buildDefaultWsUrl(this.normalizeUrl(updates.apiBase), runtimeMode)
     }
 
     this.config = this.normalizeConfig(this.mergeConfig(this.config, normalizedUpdates))
@@ -294,25 +309,39 @@ export class ConfigManager {
 
   public validateConfig(): { valid: boolean; errors: string[] } {
     const errors: string[] = []
+    const runtimeMode = this.config.runtime.mode
+    const requireExplicitBackend = runtimeMode === 'qa' || runtimeMode === 'production'
 
     if (!this.config.apiBase) {
-      errors.push('apiBase is required')
+      errors.push(
+        requireExplicitBackend
+          ? 'apiBase is required for qa/production. Configure the backend IP, for example http://10.20.0.20:3000'
+          : 'apiBase is required'
+      )
     }
 
     if (!this.config.wsUrl) {
-      errors.push('wsUrl is required')
+      errors.push(
+        requireExplicitBackend
+          ? 'wsUrl is required for qa/production. Configure the backend websocket URL, for example ws://10.20.0.20:3000/ws'
+          : 'wsUrl is required'
+      )
     }
 
-    try {
-      new URL(this.config.apiBase)
-    } catch {
-      errors.push('apiBase must be a valid URL')
+    if (this.config.apiBase) {
+      try {
+        new URL(this.config.apiBase)
+      } catch {
+        errors.push('apiBase must be a valid URL')
+      }
     }
 
-    try {
-      new URL(this.config.wsUrl)
-    } catch {
-      errors.push('wsUrl must be a valid URL')
+    if (this.config.wsUrl) {
+      try {
+        new URL(this.config.wsUrl)
+      } catch {
+        errors.push('wsUrl must be a valid URL')
+      }
     }
 
     if (!this.isRuntimeMode(this.config.runtime.mode)) {

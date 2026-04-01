@@ -2,6 +2,8 @@
 
 This guide will help you get the HexmonSignage Player up and running quickly.
 
+For on-prem deployment, do not start with this legacy quick-start alone. Use [`../ops/onprem/QA_SETUP_GUIDE.md`](../ops/onprem/QA_SETUP_GUIDE.md) for QA or [`../ops/onprem/PRODUCTION_SETUP_GUIDE.md`](../ops/onprem/PRODUCTION_SETUP_GUIDE.md) for production. The supported on-prem profile is IP-only and points players directly at `http://<backend-ip>:3000`.
+
 ## Prerequisites
 
 - Ubuntu 20.04 LTS or later
@@ -32,8 +34,8 @@ Edit `config.json` with your settings:
 
 ```json
 {
-  "apiBase": "https://your-api-server.com",
-    "wsUrl": "wss://your-api-server.com/ws",
+  "apiBase": "http://10.20.0.20:3000",
+  "wsUrl": "ws://10.20.0.20:3000/ws",
   "deviceId": "",
   "runtime": {
     "mode": "dev"
@@ -265,8 +267,8 @@ sudo dpkg -i build/hexmon-signage-player_1.0.0_amd64.deb
 All configuration can be set via environment variables:
 
 ```bash
-export HEXMON_API_BASE="https://api.hexmon.local"
-export HEXMON_WS_URL="wss://api.hexmon.local/ws"
+export HEXMON_API_BASE="http://10.20.0.20:3000"
+export HEXMON_WS_URL="ws://10.20.0.20:3000/ws"
 export HEXMON_DEVICE_ID="device-12345"
 export HEXMON_MTLS_ENABLED="true"
 export HEXMON_LOG_LEVEL="debug"
@@ -277,8 +279,8 @@ export HEXMON_LOG_LEVEL="debug"
 The application looks for configuration in this order:
 
 1. `$HEXMON_CONFIG_PATH`
-2. `/etc/hexmon/config.json`
-3. `~/.config/hexmon/config.json`
+2. `$SIGNAGE_CONFIG_PATH`
+3. the per-user Electron app-data config location
 4. `./config.json`
 
 ## Debugging
@@ -294,7 +296,7 @@ npm run start:dev
 
 Logs are written to:
 - Development: `./cache/logs/`
-- Production: `/var/cache/hexmon/logs/`
+- Production: the per-user runtime log directory under the player app-data root
 
 ### Diagnostics Overlay
 

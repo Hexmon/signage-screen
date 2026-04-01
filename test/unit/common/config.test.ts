@@ -14,11 +14,17 @@ describe('Config Manager', () => {
   let originalNodeEnv: string | undefined
   let originalRuntimeMode: string | undefined
   let originalConfigPath: string | undefined
+  let originalHexmonApiBase: string | undefined
+  let originalHexmonWsUrl: string | undefined
+  let originalSignageAllowLocalhost: string | undefined
 
   beforeEach(() => {
     originalNodeEnv = process.env.NODE_ENV
     originalRuntimeMode = process.env.HEXMON_RUNTIME_MODE
     originalConfigPath = process.env.HEXMON_CONFIG_PATH
+    originalHexmonApiBase = process.env.HEXMON_API_BASE
+    originalHexmonWsUrl = process.env.HEXMON_WS_URL
+    originalSignageAllowLocalhost = process.env.SIGNAGE_ALLOW_LOCALHOST
     tempDir = createTempDir('config-test-')
     configPath = path.join(tempDir, 'config.json')
 
@@ -63,6 +69,21 @@ describe('Config Manager', () => {
       delete process.env.NODE_ENV
     } else {
       process.env.NODE_ENV = originalNodeEnv
+    }
+    if (originalHexmonApiBase === undefined) {
+      delete process.env.HEXMON_API_BASE
+    } else {
+      process.env.HEXMON_API_BASE = originalHexmonApiBase
+    }
+    if (originalHexmonWsUrl === undefined) {
+      delete process.env.HEXMON_WS_URL
+    } else {
+      process.env.HEXMON_WS_URL = originalHexmonWsUrl
+    }
+    if (originalSignageAllowLocalhost === undefined) {
+      delete process.env.SIGNAGE_ALLOW_LOCALHOST
+    } else {
+      process.env.SIGNAGE_ALLOW_LOCALHOST = originalSignageAllowLocalhost
     }
     sinon.restore()
   })
@@ -244,6 +265,26 @@ describe('Config Manager', () => {
 
       expect(config.runtime.mode).to.equal('production')
     })
+
+    it('should honor HEXMON_API_BASE and HEXMON_WS_URL environment variables', () => {
+      const updatedConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+      delete updatedConfig.apiBase
+      delete updatedConfig.wsUrl
+      fs.writeFileSync(configPath, JSON.stringify(updatedConfig, null, 2))
+
+      process.env.HEXMON_API_BASE = 'http://10.20.0.20:3000'
+      process.env.HEXMON_WS_URL = 'ws://10.20.0.20:3000/ws'
+      process.env.HEXMON_RUNTIME_MODE = 'production'
+
+      delete require.cache[require.resolve('../../../src/common/config')]
+      const { getConfigManager } = require('../../../src/common/config')
+
+      const configManager = getConfigManager()
+      const config = configManager.getConfig()
+
+      expect(config.apiBase).to.equal('http://10.20.0.20:3000')
+      expect(config.wsUrl).to.equal('ws://10.20.0.20:3000/ws')
+    })
   })
 
   describe('Configuration Update', () => {
@@ -268,6 +309,55 @@ describe('Config Manager', () => {
       // Read from disk
       const diskConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
       expect(diskConfig.deviceId).to.equal('persisted-device')
+    })
+
+    it('should derive wsUrl from apiBase updates using the active runtime mode', () => {
+      delete require.cache[require.resolve('../../../src/common/config')]
+      const { getConfigManager } = require('../../../src/common/config')
+
+      const configManager = getConfigManager()
+      configManager.updateConfig({ apiBase: 'http://10.20.0.20:3000' })
+
+      const config = configManager.getConfig()
+      expect(config.wsUrl).to.equal('ws://10.20.0.20:3000/ws')
+    })
+  })
+
+  describe('Production backend requirements', () => {
+    it('should not invent a backend IP in production when none is configured', () => {
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify(
+          {
+            deviceId: '',
+            runtime: { mode: 'production' },
+          },
+          null,
+          2
+        )
+      )
+
+      delete process.env.NODE_ENV
+      delete process.env.HEXMON_API_BASE
+      delete process.env.HEXMON_WS_URL
+      delete process.env.SIGNAGE_ALLOW_LOCALHOST
+
+      delete require.cache[require.resolve('../../../src/common/config')]
+      const { getConfigManager } = require('../../../src/common/config')
+
+      const configManager = getConfigManager()
+      const config = configManager.getConfig()
+      const validation = configManager.validateConfig()
+
+      expect(config.apiBase).to.equal('')
+      expect(config.wsUrl).to.equal('')
+      expect(validation.valid).to.equal(false)
+      expect(validation.errors).to.include(
+        'apiBase is required for qa/production. Configure the backend IP, for example http://10.20.0.20:3000'
+      )
+      expect(validation.errors).to.include(
+        'wsUrl is required for qa/production. Configure the backend websocket URL, for example ws://10.20.0.20:3000/ws'
+      )
     })
   })
 
