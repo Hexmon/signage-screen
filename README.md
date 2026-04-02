@@ -4,6 +4,7 @@ Production-grade Windows and Ubuntu Electron digital signage player with offline
 
 For on-prem deployment and support, start with the canonical runbooks in the `signhex-platform` repo:
 
+- product export packaging: `signhex-platform/docs/runbooks/product-export-packaging.md`
 - QA: `signhex-platform/docs/runbooks/onprem-qa-setup.md`
 - Production: `signhex-platform/docs/runbooks/onprem-production-setup.md`
 See [PLATFORM_SUPPORT.md](./PLATFORM_SUPPORT.md) for the current production and development support matrix.
@@ -20,6 +21,8 @@ Runtime-bundle contract:
 - target player machines receive only generated installers and config templates
 - do not copy the player source tree to QA or production devices
 - the unified bundle builder stages prebuilt Windows and Ubuntu installers from `PLAYER_ARTIFACTS_DIR`
+- use `signhex-platform/scripts/export/package-electron.sh` to create the per-platform distributable folders
+- build Electron installers on a native builder for the target platform
 
 ## Features
 
@@ -108,6 +111,8 @@ npm run build
 npm run package:linux
 # or
 npm run package:win
+# or on macOS
+npm run package:mac
 ```
 
 ## Configuration

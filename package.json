@@ -30,6 +30,7 @@
     "pair:request": "npm run player:cli -- pair request",
     "package": "electron-builder --linux --win",
     "package:linux": "electron-builder --linux",
+    "package:mac": "electron-builder --mac dmg zip",
     "package:win": "electron-builder --win nsis",
     "package:all": "electron-builder --linux --win",
     "package:deb": "electron-builder --linux deb",
@@ -134,6 +135,13 @@
           ]
         }
       ]
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.utilities"
     },
     "deb": {
       "depends": [
