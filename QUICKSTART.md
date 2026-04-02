@@ -2,7 +2,7 @@
 
 This guide will help you get the HexmonSignage Player up and running quickly.
 
-For on-prem deployment, do not start with this legacy quick-start alone. Use [`../ops/onprem/QA_SETUP_GUIDE.md`](../ops/onprem/QA_SETUP_GUIDE.md) for QA or [`../ops/onprem/PRODUCTION_SETUP_GUIDE.md`](../ops/onprem/PRODUCTION_SETUP_GUIDE.md) for production. The supported on-prem profile is IP-only and points players directly at `http://<backend-ip>:3000`.
+For on-prem deployment, do not start with this legacy quick-start alone. Use `signhex-platform/docs/runbooks/onprem-qa-setup.md` for QA or `signhex-platform/docs/runbooks/onprem-production-setup.md` for production. The supported on-prem profile is IP-only and points players directly at `http://<backend-ip>:3000`.
 
 ## Prerequisites
 

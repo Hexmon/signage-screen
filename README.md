@@ -2,10 +2,10 @@
 
 Production-grade Windows and Ubuntu Electron digital signage player with offline-first architecture, mTLS authentication, and comprehensive telemetry.
 
-For on-prem deployment and support, start with:
+For on-prem deployment and support, start with the canonical runbooks in the `signhex-platform` repo:
 
-- QA: [`../ops/onprem/QA_SETUP_GUIDE.md`](../ops/onprem/QA_SETUP_GUIDE.md)
-- Production: [`../ops/onprem/PRODUCTION_SETUP_GUIDE.md`](../ops/onprem/PRODUCTION_SETUP_GUIDE.md)
+- QA: `signhex-platform/docs/runbooks/onprem-qa-setup.md`
+- Production: `signhex-platform/docs/runbooks/onprem-production-setup.md`
 See [PLATFORM_SUPPORT.md](./PLATFORM_SUPPORT.md) for the current production and development support matrix.
 
 Supported on-prem production contract:

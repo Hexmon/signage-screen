@@ -913,7 +913,7 @@ sudo ufw status
 ## Additional Resources
 
 - [Installation Guide](./INSTALL.md)
-- [Deployment Guide](./DEPLOYMENT.md)
+- Deployment guide: `signhex-platform/docs/runbooks/player-deployment.md`
 - [Troubleshooting Guide](./TROUBLESHOOTING.md)
 - [Security Guide](./SECURITY.md)
 - [API Documentation](./API.md)
@@ -923,4 +923,3 @@ sudo ufw status
 
 **Last Updated**: 2025-01-05
 **Version**: 1.0.0
-
