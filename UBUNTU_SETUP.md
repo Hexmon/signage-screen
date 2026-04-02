@@ -7,6 +7,12 @@ This is the current supported production path for the player on Ubuntu:
 - `.deb` or `AppImage` install
 - XDG autostart
 
+For the current Ubuntu audit findings and native validation matrix, also use:
+
+- [docs/ubuntu-compatibility-audit.md](./docs/ubuntu-compatibility-audit.md)
+- [docs/ubuntu-feature-validation-matrix.md](./docs/ubuntu-feature-validation-matrix.md)
+- [docs/ubuntu-runtime-validation-checklist.md](./docs/ubuntu-runtime-validation-checklist.md)
+
 ## 1. Install
 
 `.deb`:

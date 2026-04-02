@@ -8,6 +8,16 @@ For on-prem deployment and support, start with the canonical runbooks in the `si
 - QA: `signhex-platform/docs/runbooks/onprem-qa-setup.md`
 - Production: `signhex-platform/docs/runbooks/onprem-production-setup.md`
 See [PLATFORM_SUPPORT.md](./PLATFORM_SUPPORT.md) for the current production and development support matrix.
+For Windows-specific audit status and native validation steps, see:
+
+- [docs/windows-compatibility-audit.md](./docs/windows-compatibility-audit.md)
+- [docs/windows-feature-validation-matrix.md](./docs/windows-feature-validation-matrix.md)
+- [docs/windows-runtime-validation-checklist.md](./docs/windows-runtime-validation-checklist.md)
+For Ubuntu-specific audit status and native validation steps, see:
+
+- [docs/ubuntu-compatibility-audit.md](./docs/ubuntu-compatibility-audit.md)
+- [docs/ubuntu-feature-validation-matrix.md](./docs/ubuntu-feature-validation-matrix.md)
+- [docs/ubuntu-runtime-validation-checklist.md](./docs/ubuntu-runtime-validation-checklist.md)
 
 Supported on-prem production contract:
 

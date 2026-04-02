@@ -15,6 +15,14 @@
   - Windows: login item registration
   - Ubuntu: XDG autostart desktop entry
 - The player no longer depends on Linux-only postinstall scripts for the primary supported install path.
+- For the current Windows audit findings and the native validation checklist, use:
+  - [docs/windows-compatibility-audit.md](./docs/windows-compatibility-audit.md)
+  - [docs/windows-feature-validation-matrix.md](./docs/windows-feature-validation-matrix.md)
+  - [docs/windows-runtime-validation-checklist.md](./docs/windows-runtime-validation-checklist.md)
+- For the current Ubuntu audit findings and the native validation checklist, use:
+  - [docs/ubuntu-compatibility-audit.md](./docs/ubuntu-compatibility-audit.md)
+  - [docs/ubuntu-feature-validation-matrix.md](./docs/ubuntu-feature-validation-matrix.md)
+  - [docs/ubuntu-runtime-validation-checklist.md](./docs/ubuntu-runtime-validation-checklist.md)
 
 ## Operator Commands
 
