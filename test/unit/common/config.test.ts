@@ -144,6 +144,25 @@ describe('Config Manager', () => {
       expect(config.intervals.commandPollMs).to.equal(5000)
       expect(diskConfig.intervals.commandPollMs).to.equal(5000)
     })
+
+    it('should migrate the legacy strict player CSP to the media-safe default', () => {
+      const legacyConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+      legacyConfig.security = {
+        csp: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'",
+      }
+      fs.writeFileSync(configPath, JSON.stringify(legacyConfig, null, 2))
+
+      delete require.cache[require.resolve('../../../src/common/config')]
+      const { getConfigManager } = require('../../../src/common/config')
+
+      const configManager = getConfigManager()
+      const config = configManager.getConfig()
+      const diskConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+
+      expect(config.security.csp).to.include("img-src 'self' data: blob: file: http: https:")
+      expect(config.security.csp).to.include("connect-src 'self' data: blob: http: https: ws: wss:")
+      expect(diskConfig.security.csp).to.equal(config.security.csp)
+    })
   })
 
   describe('Configuration Validation', () => {

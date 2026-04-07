@@ -26,8 +26,10 @@ describe('Playback Engine', () => {
 
   it('emits a clear-active playback update when playback stops', () => {
     const { getPlaybackEngine } = require('../../../src/main/services/playback/playback-engine')
+    const { getTelemetryService } = require('../../../src/main/services/telemetry/telemetry-service')
 
     const send = sandbox.spy()
+    const clearCurrentPlayback = sandbox.spy(getTelemetryService(), 'clearCurrentPlayback')
     const engine = getPlaybackEngine()
     engine.initialize({
       webContents: {
@@ -41,6 +43,7 @@ describe('Playback Engine', () => {
       type: 'clear-active',
       reason: 'timeline-stopped',
     })).to.equal(true)
+    expect(clearCurrentPlayback.calledOnce).to.equal(true)
   })
 
   it('ignores equivalent timeline playlist updates when only presigned asset urls changed', async () => {

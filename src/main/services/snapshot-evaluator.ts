@@ -37,10 +37,9 @@ function inferTypeFromValue(input: {
   const normalizedMime = normalizeMime(input.contentType || input.sourceContentType)
   const extension = getExtensionFromName(input.mediaName) || getExtensionFromUrl(input.remoteUrl)
 
+  if (normalizedType === 'url' || normalizedType === 'webpage') return 'url'
   if (normalizedType === 'image' || normalizedMime?.startsWith('image/')) return 'image'
   if (normalizedType === 'video' || normalizedMime?.startsWith('video/')) return 'video'
-  if (normalizedType === 'url') return 'url'
-  if (normalizedType === 'webpage') return 'url'
 
   if (
     normalizedType === 'pdf' ||

@@ -100,6 +100,11 @@ export class TelemetryService {
     heartbeatService.setCurrentMedia(mediaId)
   }
 
+  clearCurrentPlayback(): void {
+    const heartbeatService = getHeartbeatService()
+    heartbeatService.clearCurrent()
+  }
+
   /**
    * Report error
    */
@@ -118,4 +123,3 @@ export function getTelemetryService(): TelemetryService {
   }
   return telemetryService
 }
-

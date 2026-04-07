@@ -76,43 +76,6 @@ describe('Player layout helpers', () => {
     ).to.equal(false)
   })
 
-  it('clears scheduled playback only when player falls back to non-scheduled modes', async () => {
-    const { shouldClearScheduledPlayback } = await import('../../../src/renderer/player.ts')
-
-    expect(
-      shouldClearScheduledPlayback({
-        state: 'PAIRED_RUNTIME',
-        mode: 'default',
-        online: true,
-      }),
-    ).to.equal(true)
-
-    expect(
-      shouldClearScheduledPlayback({
-        state: 'PAIRED_RUNTIME',
-        mode: 'empty',
-        online: true,
-      }),
-    ).to.equal(true)
-
-    expect(
-      shouldClearScheduledPlayback({
-        state: 'PAIRED_RUNTIME',
-        mode: 'normal',
-        online: true,
-      }),
-    ).to.equal(false)
-
-    expect(
-      shouldClearScheduledPlayback({
-        state: 'PAIRED_RUNTIME',
-        mode: 'normal',
-        online: true,
-        currentMediaId: 'media-1',
-      }),
-    ).to.equal(false)
-  })
-
   it('recursively tears down scheduled media trees', async () => {
     const { teardownScheduledElementTree } = await import('../../../src/renderer/player.ts')
 

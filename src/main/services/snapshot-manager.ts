@@ -350,8 +350,7 @@ export class SnapshotManager extends EventEmitter {
       }
 
       if (!localPath && item.type !== 'url') {
-        logger.warn({ mediaId }, 'Media not cached, skipping item')
-        continue
+        logger.warn({ mediaId }, 'Media not cached, keeping remote playback source')
       }
 
       if (localPath) {

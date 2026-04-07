@@ -11,6 +11,22 @@ import { importLegacyLinuxRuntimeState, resolveRuntimePaths, type RuntimePaths }
 const RUNTIME_MODES: RuntimeMode[] = ['dev', 'qa', 'production']
 const LEGACY_COMMAND_POLL_MS = 30000
 const LIVE_COMMAND_POLL_MS = 5000
+const LEGACY_PLAYER_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+
+function buildDefaultPlayerCsp(): string {
+  return [
+    "default-src 'self' data: blob: file: http: https:",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: file: http: https:",
+    "media-src 'self' data: blob: file: http: https:",
+    "connect-src 'self' data: blob: http: https: ws: wss:",
+    "frame-src 'self' data: blob: file: http: https:",
+    "worker-src 'self' blob:",
+    "font-src 'self' data: http: https:",
+    "object-src 'none'",
+  ].join('; ')
+}
 
 export class ConfigManager {
   private config: AppConfig
@@ -89,7 +105,7 @@ export class ConfigManager {
         offTime: process.env['HEXMON_POWER_OFF_TIME'],
       },
       security: {
-        csp: process.env['HEXMON_SECURITY_CSP'] || "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'",
+        csp: process.env['HEXMON_SECURITY_CSP'] || buildDefaultPlayerCsp(),
         allowedDomains: process.env['HEXMON_SECURITY_ALLOWED_DOMAINS']?.split(',') || [],
         disableEval: process.env['HEXMON_SECURITY_DISABLE_EVAL'] !== 'false',
         contextIsolation: process.env['HEXMON_SECURITY_CONTEXT_ISOLATION'] !== 'false',
@@ -162,7 +178,10 @@ export class ConfigManager {
     }
 
     this.config = normalized
-    if (merged.intervals.commandPollMs !== normalized.intervals.commandPollMs) {
+    if (
+      merged.intervals.commandPollMs !== normalized.intervals.commandPollMs ||
+      merged.security.csp !== normalized.security.csp
+    ) {
       this.saveConfig()
     }
     return normalized
@@ -203,6 +222,10 @@ export class ConfigManager {
       config.intervals.commandPollMs === LEGACY_COMMAND_POLL_MS
         ? LIVE_COMMAND_POLL_MS
         : config.intervals.commandPollMs
+    const normalizedCsp =
+      !config.security.csp || config.security.csp.trim() === '' || config.security.csp === LEGACY_PLAYER_CSP
+        ? buildDefaultPlayerCsp()
+        : config.security.csp
 
     return {
       ...config,
@@ -215,6 +238,10 @@ export class ConfigManager {
       intervals: {
         ...config.intervals,
         commandPollMs,
+      },
+      security: {
+        ...config.security,
+        csp: normalizedCsp,
       },
     }
   }

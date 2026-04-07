@@ -302,6 +302,62 @@ describe('Snapshot Manager', () => {
     expect((playlist?.items[0]?.meta as any)?.scene?.slots).to.have.length(2)
   })
 
+  it('should keep scheduled items playable from remote URLs when cache is cold', async () => {
+    const baseTime = new Date('2026-03-14T09:00:05.000Z')
+    clock = sandbox.useFakeTimers({ now: baseTime, shouldAdvanceTime: false })
+
+    const snapshotFile = path.join(cacheDir, 'last-snapshot.json')
+    fs.writeFileSync(
+      snapshotFile,
+      JSON.stringify({
+        snapshot_id: 'snap-remote-only',
+        schedule: {
+          id: 'sched-remote-only',
+          items: [
+            {
+              id: 'window-remote-1',
+              start_at: '2026-03-14T09:00:00.000Z',
+              end_at: '2026-03-14T09:30:00.000Z',
+              priority: 20,
+              presentation: {
+                id: 'presentation-remote-1',
+                name: 'Remote Schedule',
+                items: [
+                  {
+                    id: 'presentation-item-remote-1',
+                    media_id: 'media-remote-1',
+                    order: 0,
+                    duration_seconds: 15,
+                    media: {
+                      id: 'media-remote-1',
+                      name: 'Remote Asset',
+                      type: 'IMAGE',
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        media_urls: {
+          'media-remote-1': 'https://cdn.example.com/remote-asset.jpg',
+        },
+      }),
+    )
+
+    const { getSnapshotManager } = require('../../../src/main/services/snapshot-manager')
+    const snapshotManager = getSnapshotManager()
+
+    await clock.tickAsync(0)
+
+    const playlist = snapshotManager.getCurrentPlaylist()
+    expect(playlist?.mode).to.equal('normal')
+    expect(playlist?.items).to.have.length(1)
+    expect(playlist?.items[0]?.mediaId).to.equal('media-remote-1')
+    expect(playlist?.items[0]?.remoteUrl).to.equal('https://cdn.example.com/remote-asset.jpg')
+    expect(playlist?.items[0]?.localUrl).to.equal(undefined)
+  })
+
   it('should clear identity-bound cached snapshot state during hard reset', async () => {
     const snapshotFile = path.join(cacheDir, 'last-snapshot.json')
     fs.writeFileSync(

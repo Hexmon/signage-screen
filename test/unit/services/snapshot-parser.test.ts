@@ -403,6 +403,58 @@ describe('Snapshot Parser', () => {
     expect(parsed.scheduleWindows[0].items[0].meta?.fallback_url).to.equal('https://cdn.example.com/kpi-fallback.svg')
   })
 
+  it('should keep scheduled webpage items as url when fallback metadata looks like an image', () => {
+    const raw = {
+      snapshot_id: 'snap-webpage-fallback-image',
+      schedule: {
+        id: 'sched-webpage-fallback-image',
+        items: [
+          {
+            id: 'schedule-item-webpage-fallback-image',
+            start_at: '2026-03-18T14:12:00.000Z',
+            end_at: '2026-03-18T15:12:00.000Z',
+            priority: 2,
+            presentation: {
+              id: 'presentation-webpage-fallback-image',
+              name: 'Webpage with generated fallback',
+              items: [
+                {
+                  id: 'presentation-item-webpage',
+                  media_id: 'media-webpage-fallback-image',
+                  order: 0,
+                  duration_seconds: 15,
+                  media: {
+                    id: 'media-webpage-fallback-image',
+                    name: 'Ops dashboard',
+                    type: 'WEBPAGE',
+                    content_type: 'image/svg+xml',
+                    source_content_type: 'text/html',
+                    source_url: 'http://localhost:8080/',
+                    fallback_url: 'https://cdn.example.com/webpage-fallback.svg',
+                    url: 'http://localhost:8080/',
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+      media_urls: {
+        'media-webpage-fallback-image': 'http://localhost:8080/',
+      },
+    }
+
+    const parsed = parseSnapshotResponse(raw)
+
+    expect(parsed.scheduleWindows).to.have.length(1)
+    expect(parsed.scheduleWindows[0].items).to.have.length(1)
+    expect(parsed.scheduleWindows[0].items[0].type).to.equal('url')
+    expect(parsed.scheduleWindows[0].items[0].remoteUrl).to.equal('http://localhost:8080/')
+    expect(parsed.scheduleWindows[0].items[0].meta?.fallback_url).to.equal('https://cdn.example.com/webpage-fallback.svg')
+    expect(parsed.scheduleWindows[0].items[0].meta?.content_type).to.equal('image/svg+xml')
+    expect(parsed.scheduleWindows[0].items[0].meta?.source_content_type).to.equal('text/html')
+  })
+
   it('should ignore expired emergency overrides', () => {
     const raw = {
       id: 'snap-5',

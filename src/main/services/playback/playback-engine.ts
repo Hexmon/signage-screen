@@ -92,7 +92,11 @@ export class PlaybackEngine extends EventEmitter {
     this.scheduler.stop()
     this.state = 'stopped'
     this.currentItem = undefined
+    this.currentScheduleId = undefined
     this.currentTimelineFingerprint = undefined
+
+    const telemetryService = getTelemetryService()
+    telemetryService.clearCurrentPlayback()
 
     if (this.mainWindow) {
       this.mainWindow.webContents.send('playback-update', {
