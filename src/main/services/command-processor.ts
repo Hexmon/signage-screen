@@ -18,9 +18,8 @@ const logger = getLogger('command-processor')
 type CommandSource = 'heartbeat' | 'poll'
 
 const HEARTBEAT_STALE_MULTIPLIER = 2
-const HEALTHY_RECHECK_MIN_MS = 1000
 const FALLBACK_POLL_JITTER_FACTOR = 0.2
-const HEALTHY_PASSIVE_POLL_JITTER_FACTOR = 0.1
+const HEALTHY_POLL_JITTER_FACTOR = 0.1
 
 export class CommandProcessor {
   private pollTimer?: NodeJS.Timeout
@@ -114,20 +113,11 @@ export class CommandProcessor {
     }
 
     const healthyDelayMs = this.getHealthyHeartbeatDelay()
-    const shouldPollWithHealthyHeartbeat = healthyDelayMs > 0 && this.shouldPollWithHealthyHeartbeat()
-
-    if (healthyDelayMs > 0 && !shouldPollWithHealthyHeartbeat) {
-      this.fallbackPollBackoff.reset()
-      this.scheduleNextEvaluation(healthyDelayMs)
-      return
-    }
 
     try {
       await this.pollCommands()
       this.fallbackPollBackoff.reset()
-      this.scheduleNextEvaluation(
-        shouldPollWithHealthyHeartbeat ? this.getHealthyPassivePollDelay() : this.fallbackPollBackoff.getDelay()
-      )
+      this.scheduleNextEvaluation(healthyDelayMs > 0 ? this.getHealthyPollDelay() : this.fallbackPollBackoff.getDelay())
     } catch {
       this.scheduleNextEvaluation(this.fallbackPollBackoff.getDelay())
     }
@@ -151,7 +141,7 @@ export class CommandProcessor {
       return 0
     }
 
-    return Math.max(staleAfterMs - ageMs, HEALTHY_RECHECK_MIN_MS)
+    return Math.max(staleAfterMs - ageMs, 1)
   }
 
   private createFallbackPollBackoff(): ExponentialBackoff {
@@ -161,15 +151,10 @@ export class CommandProcessor {
     return new ExponentialBackoff(baseDelayMs, maxDelayMs, 10, FALLBACK_POLL_JITTER_FACTOR)
   }
 
-  private shouldPollWithHealthyHeartbeat(): boolean {
-    const mode = getSnapshotManager().getCurrentPlaylist()?.mode
-    return mode === 'default' || mode === 'empty' || mode === 'offline'
-  }
-
-  private getHealthyPassivePollDelay(): number {
+  private getHealthyPollDelay(): number {
     const config = getConfigManager().getConfig()
     const baseDelayMs = Math.max(config.intervals.commandPollMs, 5000)
-    const jitter = baseDelayMs * HEALTHY_PASSIVE_POLL_JITTER_FACTOR * (Math.random() * 2 - 1)
+    const jitter = baseDelayMs * HEALTHY_POLL_JITTER_FACTOR * (Math.random() * 2 - 1)
     return Math.max(0, Math.round(baseDelayMs + jitter))
   }
 

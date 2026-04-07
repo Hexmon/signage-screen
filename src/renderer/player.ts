@@ -76,12 +76,7 @@ export function resolvePlayerContentSource(
     return 'none'
   }
 
-  if (
-    status.mode === 'default' ||
-    status.mode === 'offline' ||
-    status.mode === 'empty' ||
-    (status.mode === 'normal' && !status.currentMediaId)
-  ) {
+  if (status.mode === 'default' || status.mode === 'offline' || status.mode === 'empty') {
     return 'default'
   }
 
@@ -109,7 +104,7 @@ export function shouldClearScheduledPlayback(status: PlayerStatus): boolean {
     return true
   }
 
-  return status.mode === 'normal' && !status.currentMediaId
+  return false
 }
 
 function teardownDisposableNode(node: DisposableMediaNode | null | undefined): void {
