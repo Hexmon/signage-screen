@@ -20,6 +20,7 @@ type CommandSource = 'heartbeat' | 'poll'
 const HEARTBEAT_STALE_MULTIPLIER = 2
 const HEALTHY_RECHECK_MIN_MS = 1000
 const FALLBACK_POLL_JITTER_FACTOR = 0.2
+const HEALTHY_PASSIVE_POLL_JITTER_FACTOR = 0.1
 
 export class CommandProcessor {
   private pollTimer?: NodeJS.Timeout
@@ -113,7 +114,9 @@ export class CommandProcessor {
     }
 
     const healthyDelayMs = this.getHealthyHeartbeatDelay()
-    if (healthyDelayMs > 0) {
+    const shouldPollWithHealthyHeartbeat = healthyDelayMs > 0 && this.shouldPollWithHealthyHeartbeat()
+
+    if (healthyDelayMs > 0 && !shouldPollWithHealthyHeartbeat) {
       this.fallbackPollBackoff.reset()
       this.scheduleNextEvaluation(healthyDelayMs)
       return
@@ -122,7 +125,9 @@ export class CommandProcessor {
     try {
       await this.pollCommands()
       this.fallbackPollBackoff.reset()
-      this.scheduleNextEvaluation(this.fallbackPollBackoff.getDelay())
+      this.scheduleNextEvaluation(
+        shouldPollWithHealthyHeartbeat ? this.getHealthyPassivePollDelay() : this.fallbackPollBackoff.getDelay()
+      )
     } catch {
       this.scheduleNextEvaluation(this.fallbackPollBackoff.getDelay())
     }
@@ -154,6 +159,18 @@ export class CommandProcessor {
     const baseDelayMs = Math.max(config.intervals.commandPollMs, 5000)
     const maxDelayMs = Math.max(baseDelayMs * 4, config.intervals.heartbeatMs * 4, 60000)
     return new ExponentialBackoff(baseDelayMs, maxDelayMs, 10, FALLBACK_POLL_JITTER_FACTOR)
+  }
+
+  private shouldPollWithHealthyHeartbeat(): boolean {
+    const mode = getSnapshotManager().getCurrentPlaylist()?.mode
+    return mode === 'default' || mode === 'empty' || mode === 'offline'
+  }
+
+  private getHealthyPassivePollDelay(): number {
+    const config = getConfigManager().getConfig()
+    const baseDelayMs = Math.max(config.intervals.commandPollMs, 5000)
+    const jitter = baseDelayMs * HEALTHY_PASSIVE_POLL_JITTER_FACTOR * (Math.random() * 2 - 1)
+    return Math.max(0, Math.round(baseDelayMs + jitter))
   }
 
   private normalizeCommand(command: Command): Command {

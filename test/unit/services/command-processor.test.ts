@@ -264,6 +264,44 @@ describe('Command Processor', () => {
     commandProcessor.stop()
   })
 
+  it('should keep lightweight /commands polling active for passive playback while heartbeat is healthy', async () => {
+    const clock = sandbox.useFakeTimers({
+      now: new Date('2026-04-07T10:00:00.000Z'),
+      shouldAdvanceTime: false,
+    })
+    sandbox.stub(Math, 'random').returns(0.5)
+    const { getCommandProcessor } = require('../../../src/main/services/command-processor')
+    const { getConfigManager } = require('../../../src/common/config')
+    const { getDeviceStateStore } = require('../../../src/main/services/device-state-store')
+    const { getSnapshotManager } = require('../../../src/main/services/snapshot-manager')
+
+    await getDeviceStateStore().update({
+      lastHeartbeatAt: new Date('2026-04-07T09:59:59.000Z').toISOString(),
+    })
+
+    const commandProcessor = getCommandProcessor()
+    const snapshotManager = getSnapshotManager()
+    sandbox.stub(snapshotManager, 'getCurrentPlaylist').returns({
+      mode: 'empty',
+      items: [],
+      scheduleId: undefined,
+    })
+    const pollStub = sandbox.stub(commandProcessor as any, 'pollCommands').resolves()
+    const passivePollDelayMs = getConfigManager().getConfig().intervals.commandPollMs
+
+    commandProcessor.start()
+    await clock.tickAsync(0)
+    expect(pollStub.callCount).to.equal(1)
+
+    await clock.tickAsync(passivePollDelayMs - 1)
+    expect(pollStub.callCount).to.equal(1)
+
+    await clock.tickAsync(1)
+    expect(pollStub.callCount).to.equal(2)
+
+    commandProcessor.stop()
+  })
+
   it('should switch to fallback polling once heartbeat becomes stale', async () => {
     const clock = sandbox.useFakeTimers({
       now: new Date('2026-04-07T10:00:00.000Z'),
