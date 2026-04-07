@@ -2,6 +2,7 @@ import { app } from 'electron'
 import { getLogger } from '../../common/logger'
 import { getConfigManager } from '../../common/config'
 import { Command, CommandResult, CommandType, DeviceApiError } from '../../common/types'
+import { ExponentialBackoff } from '../../common/utils'
 import { getHttpClient } from './network/http-client'
 import { getRequestQueue } from './network/request-queue'
 import { getPairingService } from './pairing-service'
@@ -16,39 +17,37 @@ const logger = getLogger('command-processor')
 
 type CommandSource = 'heartbeat' | 'poll'
 
+const HEARTBEAT_STALE_MULTIPLIER = 2
+const HEALTHY_RECHECK_MIN_MS = 1000
+const FALLBACK_POLL_JITTER_FACTOR = 0.2
+
 export class CommandProcessor {
-  private pollInterval?: NodeJS.Timeout
+  private pollTimer?: NodeJS.Timeout
   private isPolling = false
   private processingCommands = new Set<string>()
   private commandHistory: Map<string, CommandResult> = new Map()
   private maxHistorySize = 100
   private rateLimitMap: Map<CommandType, number> = new Map()
   private rateLimitWindowMs = 60000
+  private fallbackPollBackoff = this.createFallbackPollBackoff()
 
   start(): void {
     if (this.isPolling) {
       return
     }
 
-    const config = getConfigManager().getConfig()
-    const intervalMs = config.intervals.commandPollMs
-
     this.isPolling = true
-    this.pollInterval = setInterval(() => {
-      this.pollCommands().catch((error) => {
-        logger.error({ error }, 'Command poll failed')
-      })
-    }, intervalMs)
-
-    void this.pollCommands()
+    this.fallbackPollBackoff = this.createFallbackPollBackoff()
+    this.scheduleNextEvaluation(0)
   }
 
   stop(): void {
-    if (this.pollInterval) {
-      clearInterval(this.pollInterval)
-      this.pollInterval = undefined
+    if (this.pollTimer) {
+      clearTimeout(this.pollTimer)
+      this.pollTimer = undefined
     }
     this.isPolling = false
+    this.fallbackPollBackoff = this.createFallbackPollBackoff()
   }
 
   async ingestCommands(rawCommands: Command[], source: CommandSource): Promise<void> {
@@ -90,7 +89,71 @@ export class CommandProcessor {
       }
 
       logger.error({ error }, 'Failed to poll commands')
+      throw error
     }
+  }
+
+  private scheduleNextEvaluation(delayMs: number): void {
+    if (!this.isPolling) {
+      return
+    }
+
+    if (this.pollTimer) {
+      clearTimeout(this.pollTimer)
+    }
+
+    this.pollTimer = setTimeout(() => {
+      void this.evaluatePollingState()
+    }, Math.max(0, Math.round(delayMs)))
+  }
+
+  private async evaluatePollingState(): Promise<void> {
+    if (!this.isPolling) {
+      return
+    }
+
+    const healthyDelayMs = this.getHealthyHeartbeatDelay()
+    if (healthyDelayMs > 0) {
+      this.fallbackPollBackoff.reset()
+      this.scheduleNextEvaluation(healthyDelayMs)
+      return
+    }
+
+    try {
+      await this.pollCommands()
+      this.fallbackPollBackoff.reset()
+      this.scheduleNextEvaluation(this.fallbackPollBackoff.getDelay())
+    } catch {
+      this.scheduleNextEvaluation(this.fallbackPollBackoff.getDelay())
+    }
+  }
+
+  private getHealthyHeartbeatDelay(): number {
+    const config = getConfigManager().getConfig()
+    const staleAfterMs = Math.max(config.intervals.heartbeatMs * HEARTBEAT_STALE_MULTIPLIER, config.intervals.commandPollMs)
+    const lastHeartbeatAt = getDeviceStateStore().getState().lastHeartbeatAt
+    if (!lastHeartbeatAt) {
+      return 0
+    }
+
+    const lastHeartbeatTs = Date.parse(lastHeartbeatAt)
+    if (Number.isNaN(lastHeartbeatTs)) {
+      return 0
+    }
+
+    const ageMs = Date.now() - lastHeartbeatTs
+    if (ageMs >= staleAfterMs) {
+      return 0
+    }
+
+    return Math.max(staleAfterMs - ageMs, HEALTHY_RECHECK_MIN_MS)
+  }
+
+  private createFallbackPollBackoff(): ExponentialBackoff {
+    const config = getConfigManager().getConfig()
+    const baseDelayMs = Math.max(config.intervals.commandPollMs, 5000)
+    const maxDelayMs = Math.max(baseDelayMs * 4, config.intervals.heartbeatMs * 4, 60000)
+    return new ExponentialBackoff(baseDelayMs, maxDelayMs, 10, FALLBACK_POLL_JITTER_FACTOR)
   }
 
   private normalizeCommand(command: Command): Command {

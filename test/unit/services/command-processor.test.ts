@@ -238,4 +238,95 @@ describe('Command Processor', () => {
     })).to.equal(true)
     expect(getConfigManager().getConfig().intervals.screenshotMs).to.equal(originalInterval)
   })
+
+  it('should skip /commands polling while heartbeat is still healthy', async () => {
+    const clock = sandbox.useFakeTimers({
+      now: new Date('2026-04-07T10:00:00.000Z'),
+      shouldAdvanceTime: false,
+    })
+    const { getCommandProcessor } = require('../../../src/main/services/command-processor')
+    const { getDeviceStateStore } = require('../../../src/main/services/device-state-store')
+    const { getHttpClient } = require('../../../src/main/services/network/http-client')
+
+    await getDeviceStateStore().update({
+      lastHeartbeatAt: new Date('2026-04-07T09:59:59.000Z').toISOString(),
+    })
+
+    const commandProcessor = getCommandProcessor()
+    const httpClient = getHttpClient()
+    const getStub = sandbox.stub(httpClient, 'get').resolves({ commands: [] })
+
+    commandProcessor.start()
+    await clock.tickAsync(58999)
+
+    expect(getStub.called).to.equal(false)
+
+    commandProcessor.stop()
+  })
+
+  it('should switch to fallback polling once heartbeat becomes stale', async () => {
+    const clock = sandbox.useFakeTimers({
+      now: new Date('2026-04-07T10:00:00.000Z'),
+      shouldAdvanceTime: false,
+    })
+    sandbox.stub(Math, 'random').returns(0.5)
+    const { getCommandProcessor } = require('../../../src/main/services/command-processor')
+    const { getDeviceStateStore } = require('../../../src/main/services/device-state-store')
+    const { getHttpClient } = require('../../../src/main/services/network/http-client')
+
+    await getDeviceStateStore().update({
+      lastHeartbeatAt: new Date('2026-04-07T09:59:59.000Z').toISOString(),
+    })
+
+    const commandProcessor = getCommandProcessor()
+    const httpClient = getHttpClient()
+    const getStub = sandbox.stub(httpClient, 'get').resolves({ commands: [] })
+
+    commandProcessor.start()
+    await clock.tickAsync(60000)
+
+    expect(getStub.callCount).to.equal(1)
+
+    commandProcessor.stop()
+  })
+
+  it('should back off fallback polling after poll failures', async () => {
+    const clock = sandbox.useFakeTimers({
+      now: new Date('2026-04-07T10:00:00.000Z'),
+      shouldAdvanceTime: false,
+    })
+    sandbox.stub(Math, 'random').returns(0.5)
+    const { getCommandProcessor } = require('../../../src/main/services/command-processor')
+    const { getDeviceStateStore } = require('../../../src/main/services/device-state-store')
+    const { getHttpClient } = require('../../../src/main/services/network/http-client')
+
+    await getDeviceStateStore().update({
+      lastHeartbeatAt: new Date('2026-04-07T09:58:00.000Z').toISOString(),
+    })
+
+    const commandProcessor = getCommandProcessor()
+    const httpClient = getHttpClient()
+    const getStub = sandbox.stub(httpClient, 'get')
+    getStub.onFirstCall().rejects(new Error('poll failed'))
+    getStub.onSecondCall().rejects(new Error('poll failed again'))
+    getStub.onThirdCall().resolves({ commands: [] })
+
+    commandProcessor.start()
+    await clock.tickAsync(0)
+    expect(getStub.callCount).to.equal(1)
+
+    await clock.tickAsync(4999)
+    expect(getStub.callCount).to.equal(1)
+
+    await clock.tickAsync(1)
+    expect(getStub.callCount).to.equal(2)
+
+    await clock.tickAsync(9999)
+    expect(getStub.callCount).to.equal(2)
+
+    await clock.tickAsync(1)
+    expect(getStub.callCount).to.equal(3)
+
+    commandProcessor.stop()
+  })
 })
