@@ -235,6 +235,7 @@ export class PlayerFlow extends EventEmitter {
 
     try {
       await this.probeAuthenticatedSnapshot()
+      await this.applyBootstrapScreenshotPolicy()
       await getSnapshotManager().refreshSnapshot()
       await getHeartbeatService().sendImmediate()
       await this.startRuntimeLoops()
@@ -253,6 +254,14 @@ export class PlayerFlow extends EventEmitter {
     } catch (error) {
       await this.handleBootstrapFailure(error)
     }
+  }
+
+  private async applyBootstrapScreenshotPolicy(): Promise<void> {
+    const policy = await this.pairingService.fetchScreenshotPolicy()
+    getScreenshotService().applyPolicy({
+      enabled: policy?.enabled === true,
+      interval_seconds: policy?.interval_seconds ?? null,
+    })
   }
 
   private async startRuntimeLoops(): Promise<void> {

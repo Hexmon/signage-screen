@@ -8,7 +8,7 @@ import * as path from 'path'
 import { BrowserWindow } from 'electron'
 import { getLogger } from '../../common/logger'
 import { getConfigManager } from '../../common/config'
-import { DeviceApiError } from '../../common/types'
+import { DeviceApiError, ScreenshotPolicyResponse } from '../../common/types'
 import { getHttpClient } from './network/http-client'
 import { getPairingService } from './pairing-service'
 import { getCertificateManager } from './cert-manager'
@@ -21,7 +21,7 @@ const logger = getLogger('screenshot-service')
 export class ScreenshotService {
   private mainWindow?: BrowserWindow
   private screenshotDir: string
-  private captureEnabled = true
+  private captureEnabled = false
 
   constructor() {
     const config = getConfigManager().getConfig()
@@ -44,6 +44,42 @@ export class ScreenshotService {
 
   isCaptureEnabled(): boolean {
     return this.captureEnabled
+  }
+
+  applyPolicy(policy: Partial<ScreenshotPolicyResponse> & { interval_ms?: number | null; intervalMs?: number | null }): {
+    enabled: boolean
+    intervalMs?: number
+  } {
+    const enabled = policy.enabled === true
+    this.setCaptureEnabled(enabled)
+
+    if (!enabled) {
+      return { enabled }
+    }
+
+    const rawIntervalMs =
+      typeof policy.intervalMs === 'number'
+        ? policy.intervalMs
+        : typeof policy.interval_ms === 'number'
+          ? policy.interval_ms
+          : typeof policy.interval_seconds === 'number'
+            ? policy.interval_seconds * 1000
+            : undefined
+
+    if (typeof rawIntervalMs !== 'number' || !Number.isFinite(rawIntervalMs)) {
+      return { enabled }
+    }
+
+    const intervalMs = Math.max(10000, Math.round(rawIntervalMs))
+    const configManager = getConfigManager()
+    configManager.updateConfig({
+      intervals: {
+        ...configManager.getConfig().intervals,
+        screenshotMs: intervalMs,
+      },
+    })
+
+    return { enabled, intervalMs }
   }
 
   /**

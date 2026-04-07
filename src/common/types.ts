@@ -128,6 +128,11 @@ export interface DefaultMediaResponse {
   media: DefaultMediaItem | null
 }
 
+export interface ScreenshotPolicyResponse {
+  enabled: boolean
+  interval_seconds: number | null
+}
+
 // Player lifecycle state machine
 export type PlayerState =
   | 'BOOT'

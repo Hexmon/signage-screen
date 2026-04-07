@@ -191,7 +191,7 @@ describe('Command Processor', () => {
 
     const commandProcessor = getCommandProcessor()
     const screenshotService = getScreenshotService()
-    const enableStub = sandbox.stub(screenshotService, 'setCaptureEnabled')
+    const applyPolicySpy = sandbox.spy(screenshotService, 'applyPolicy')
 
     const result = await commandProcessor.handleSetScreenshotInterval({
       id: 'cmd-interval',
@@ -203,7 +203,11 @@ describe('Command Processor', () => {
     })
 
     expect(result.success).to.equal(true)
-    expect(enableStub.calledOnceWith(true)).to.equal(true)
+    expect(applyPolicySpy.calledOnceWith({
+      enabled: true,
+      interval_seconds: 30,
+      interval_ms: null,
+    })).to.equal(true)
     expect(getConfigManager().getConfig().intervals.screenshotMs).to.equal(30000)
   })
 
@@ -214,7 +218,7 @@ describe('Command Processor', () => {
 
     const commandProcessor = getCommandProcessor()
     const screenshotService = getScreenshotService()
-    const enableStub = sandbox.stub(screenshotService, 'setCaptureEnabled')
+    const applyPolicySpy = sandbox.spy(screenshotService, 'applyPolicy')
 
     const originalInterval = getConfigManager().getConfig().intervals.screenshotMs
     const result = await commandProcessor.handleSetScreenshotInterval({
@@ -227,7 +231,11 @@ describe('Command Processor', () => {
 
     expect(result.success).to.equal(true)
     expect(result.message).to.contain('disabled')
-    expect(enableStub.calledOnceWith(false)).to.equal(true)
+    expect(applyPolicySpy.calledOnceWith({
+      enabled: false,
+      interval_seconds: null,
+      interval_ms: null,
+    })).to.equal(true)
     expect(getConfigManager().getConfig().intervals.screenshotMs).to.equal(originalInterval)
   })
 })

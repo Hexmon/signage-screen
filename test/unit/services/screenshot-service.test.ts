@@ -151,12 +151,28 @@ describe('Screenshot Service', () => {
     const { getScreenshotService } = require('../../../src/main/services/screenshot-service')
     const screenshotService = getScreenshotService()
 
-    expect(screenshotService.isCaptureEnabled()).to.equal(true)
+    expect(screenshotService.isCaptureEnabled()).to.equal(false)
 
     screenshotService.setCaptureEnabled(false)
     expect(screenshotService.isCaptureEnabled()).to.equal(false)
 
     screenshotService.setCaptureEnabled(true)
     expect(screenshotService.isCaptureEnabled()).to.equal(true)
+  })
+
+  it('applies server screenshot policy and persists the interval when enabled', async () => {
+    const { getScreenshotService } = require('../../../src/main/services/screenshot-service')
+    const { getConfigManager } = require('../../../src/common/config')
+    const screenshotService = getScreenshotService()
+
+    const applied = screenshotService.applyPolicy({
+      enabled: true,
+      interval_seconds: 45,
+    })
+
+    expect(applied.enabled).to.equal(true)
+    expect(applied.intervalMs).to.equal(45000)
+    expect(screenshotService.isCaptureEnabled()).to.equal(true)
+    expect(getConfigManager().getConfig().intervals.screenshotMs).to.equal(45000)
   })
 })

@@ -219,16 +219,14 @@ export class CommandProcessor {
     const screenshotService = getScreenshotService()
     const enabledParam = command.params?.['enabled']
     const enabled = typeof enabledParam === 'boolean' ? enabledParam : true
-    screenshotService.setCaptureEnabled(enabled)
 
     const rawIntervalSeconds = command.params?.['interval_seconds']
     const rawIntervalMilliseconds = command.params?.['interval_ms'] ?? command.params?.['intervalMs']
-    const intervalMs =
-      typeof rawIntervalSeconds === 'number'
-        ? Math.max(10000, Math.round(rawIntervalSeconds * 1000))
-        : typeof rawIntervalMilliseconds === 'number'
-          ? Math.max(10000, Math.round(rawIntervalMilliseconds))
-          : undefined
+    const appliedPolicy = screenshotService.applyPolicy({
+      enabled,
+      interval_seconds: typeof rawIntervalSeconds === 'number' ? rawIntervalSeconds : null,
+      interval_ms: typeof rawIntervalMilliseconds === 'number' ? rawIntervalMilliseconds : null,
+    })
 
     if (!enabled) {
       return {
@@ -238,7 +236,7 @@ export class CommandProcessor {
       }
     }
 
-    if (!intervalMs) {
+    if (!appliedPolicy.intervalMs) {
       return {
         success: false,
         error: 'Missing screenshot interval',
@@ -246,16 +244,9 @@ export class CommandProcessor {
       }
     }
 
-    getConfigManager().updateConfig({
-      intervals: {
-        ...getConfigManager().getConfig().intervals,
-        screenshotMs: intervalMs,
-      },
-    })
-
     return {
       success: true,
-      message: `Screenshot interval updated to ${intervalMs}ms`,
+      message: `Screenshot interval updated to ${appliedPolicy.intervalMs}ms`,
       timestamp: new Date().toISOString(),
     }
   }
