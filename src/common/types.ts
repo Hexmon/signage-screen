@@ -401,13 +401,28 @@ export interface DeviceInfo {
 
 export interface SystemStats {
   cpuUsage: number
+  cpuCores: number
+  cpuLoad1m: number
+  cpuLoad5m: number
+  cpuLoad15m: number
   memoryUsage: number
   memoryTotal: number
+  memoryFree: number
   diskUsage: number
   diskTotal: number
+  diskFree: number
   temperature?: number
   uptime: number
   networkInterfaces: NetworkInterface[]
+  primaryNetworkInterface?: string
+  primaryNetworkAddress?: string
+  displayCount: number
+  displays: DisplayTelemetry[]
+  hostname: string
+  osVersion: string
+  batteryPercent?: number
+  isCharging?: boolean
+  powerSource?: PowerSource
 }
 
 export interface NetworkInterface {
@@ -418,6 +433,18 @@ export interface NetworkInterface {
   internal: boolean
 }
 
+export interface DisplayTelemetry {
+  id?: string
+  width: number
+  height: number
+  refresh_rate_hz?: number
+  orientation?: 'portrait' | 'landscape'
+  connected?: boolean
+  model?: string
+}
+
+export type PowerSource = 'AC' | 'BATTERY' | 'USB' | 'UNKNOWN'
+
 export interface HeartbeatPayload {
   device_id: string
   status: 'ONLINE' | 'OFFLINE' | 'ERROR'
@@ -427,6 +454,28 @@ export interface HeartbeatPayload {
   temperature?: number
   current_schedule_id?: string
   current_media_id?: string
+  memory_total_mb?: number
+  memory_used_mb?: number
+  memory_free_mb?: number
+  cpu_cores?: number
+  cpu_load_1m?: number
+  cpu_load_5m?: number
+  cpu_load_15m?: number
+  cpu_temp_c?: number
+  disk_total_gb?: number
+  disk_used_gb?: number
+  disk_free_gb?: number
+  disk_usage_percent?: number
+  network_ip?: string
+  network_interface?: string
+  display_count?: number
+  displays?: DisplayTelemetry[]
+  os_version?: string
+  hostname?: string
+  player_uptime_seconds?: number
+  battery_percent?: number
+  is_charging?: boolean
+  power_source?: PowerSource
 }
 
 export interface HealthStatus {

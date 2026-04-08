@@ -4,7 +4,7 @@
 
 import { getLogger } from '../../../common/logger'
 import { getConfigManager } from '../../../common/config'
-import { Command, DeviceApiError, HeartbeatPayload } from '../../../common/types'
+import { Command, DeviceApiError, HeartbeatPayload, SystemStats } from '../../../common/types'
 import { getHttpClient } from '../network/http-client'
 import { getRequestQueue } from '../network/request-queue'
 import { getPairingService } from '../pairing-service'
@@ -70,18 +70,95 @@ export class HeartbeatService {
     await this.sendHeartbeat()
   }
 
+  private toMegabytes(value: number): number {
+    return Math.round((value / (1024 * 1024)) * 10) / 10
+  }
+
+  private toGigabytes(value: number): number {
+    return Math.round((value / (1024 * 1024 * 1024)) * 100) / 100
+  }
+
+  private buildHeartbeatPayload(
+    deviceId: string,
+    status: 'ONLINE' | 'OFFLINE' | 'ERROR',
+    stats: {
+      uptime: number
+      memoryUsage: number
+      memoryTotal: number
+      memoryFree: number
+      cpuUsage: number
+      cpuCores: number
+      cpuLoad1m: number
+      cpuLoad5m: number
+      cpuLoad15m: number
+      diskUsage: number
+      diskTotal: number
+      diskFree: number
+      temperature?: number
+      primaryNetworkAddress?: string
+      primaryNetworkInterface?: string
+      displayCount: number
+      displays: Array<{
+        id?: string
+        width: number
+        height: number
+        refresh_rate_hz?: number
+        orientation?: 'portrait' | 'landscape'
+        connected?: boolean
+        model?: string
+      }>
+      hostname: string
+      osVersion: string
+      batteryPercent?: number
+      isCharging?: boolean
+      powerSource?: 'AC' | 'BATTERY' | 'USB' | 'UNKNOWN'
+    }
+  ): HeartbeatPayload {
+    const memoryUsagePercent =
+      stats.memoryTotal > 0 ? Math.round((stats.memoryUsage / stats.memoryTotal) * 1000) / 10 : 0
+    const diskUsagePercent =
+      stats.diskTotal > 0 ? Math.round((stats.diskUsage / stats.diskTotal) * 1000) / 10 : undefined
+
+    return {
+      device_id: deviceId,
+      status,
+      uptime: stats.uptime,
+      memory_usage: memoryUsagePercent,
+      cpu_usage: Math.round(stats.cpuUsage * 100) / 100,
+      temperature: stats.temperature,
+      current_schedule_id: this.currentScheduleId,
+      current_media_id: this.currentMediaId,
+      memory_total_mb: this.toMegabytes(stats.memoryTotal),
+      memory_used_mb: this.toMegabytes(stats.memoryUsage),
+      memory_free_mb: this.toMegabytes(stats.memoryFree),
+      cpu_cores: stats.cpuCores,
+      cpu_load_1m: Math.round(stats.cpuLoad1m * 100) / 100,
+      cpu_load_5m: Math.round(stats.cpuLoad5m * 100) / 100,
+      cpu_load_15m: Math.round(stats.cpuLoad15m * 100) / 100,
+      cpu_temp_c: stats.temperature,
+      disk_total_gb: this.toGigabytes(stats.diskTotal),
+      disk_used_gb: this.toGigabytes(stats.diskUsage),
+      disk_free_gb: this.toGigabytes(stats.diskFree),
+      disk_usage_percent: diskUsagePercent,
+      network_ip: stats.primaryNetworkAddress,
+      network_interface: stats.primaryNetworkInterface,
+      display_count: stats.displayCount,
+      displays: stats.displays,
+      os_version: stats.osVersion,
+      hostname: stats.hostname,
+      player_uptime_seconds: Math.round(process.uptime()),
+      battery_percent: stats.batteryPercent,
+      is_charging: stats.isCharging,
+      power_source: stats.powerSource,
+    }
+  }
+
   /**
    * Send heartbeat to backend
    */
   private async sendHeartbeat(): Promise<void> {
     let stats:
-      | {
-          uptime: number
-          memoryUsage: number
-          memoryTotal: number
-          cpuUsage: number
-          temperature?: number
-        }
+      | SystemStats
       | undefined
 
     try {
@@ -102,19 +179,7 @@ export class HeartbeatService {
       stats = await statsCollector.collect()
 
       // Prepare heartbeat payload
-      const memoryUsagePercent =
-        stats.memoryTotal > 0 ? Math.round((stats.memoryUsage / stats.memoryTotal) * 1000) / 10 : 0
-
-      const payload: HeartbeatPayload = {
-        device_id: deviceId,
-        status: 'ONLINE',
-        uptime: stats.uptime,
-        memory_usage: memoryUsagePercent,
-        cpu_usage: Math.round(stats.cpuUsage * 100) / 100,
-        temperature: stats.temperature,
-        current_schedule_id: this.currentScheduleId,
-        current_media_id: this.currentMediaId,
-      }
+      const payload = this.buildHeartbeatPayload(deviceId, 'ONLINE', stats)
 
       // Send heartbeat
       const httpClient = getHttpClient()
@@ -155,14 +220,16 @@ export class HeartbeatService {
       await requestQueue.enqueue({
         method: 'POST',
         url: '/api/v1/device/heartbeat',
-        data: {
-          device_id: getPairingService().getDeviceId(),
-          status: 'OFFLINE',
-          uptime: stats?.uptime ?? 0,
-          memory_usage: 0,
-          cpu_usage: 0,
-          temperature: stats?.temperature,
-        },
+        data:
+          stats && getPairingService().getDeviceId()
+            ? this.buildHeartbeatPayload(getPairingService().getDeviceId() as string, 'OFFLINE', stats)
+            : {
+                device_id: getPairingService().getDeviceId(),
+                status: 'OFFLINE',
+                uptime: 0,
+                memory_usage: 0,
+                cpu_usage: 0,
+              },
         maxRetries: 3,
       })
     }
