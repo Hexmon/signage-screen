@@ -227,6 +227,8 @@ Expected output:
 curl http://127.0.0.1:3300/healthz
 ```
 
+`/metrics` is available on the same listener when `observability.metricsEnabled=true`. The default install keeps that listener on `127.0.0.1:3300`.
+
 Expected output:
 ```json
 {

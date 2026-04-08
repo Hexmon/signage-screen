@@ -19,6 +19,7 @@ export interface AppConfig {
   log: LogConfig
   power: PowerConfig
   security: SecurityConfig
+  observability: ObservabilityConfig
 }
 
 export interface RuntimeConfig {
@@ -73,6 +74,14 @@ export interface SecurityConfig {
   contextIsolation: boolean
   nodeIntegration: boolean
   sandbox: boolean
+}
+
+export interface ObservabilityConfig {
+  enabled: boolean
+  metricsEnabled: boolean
+  bindAddress: string
+  port: number
+  allowRemoteAccess: boolean
 }
 
 // ============================================================================
@@ -279,7 +288,7 @@ export interface SnapshotPresentationSlotItem {
   media_id?: string
   order?: number
   duration_seconds?: number
-  fit_mode?: FitMode | string
+  fit_mode?: FitMode | (string & {})
   audio_enabled?: boolean
   loop_enabled?: boolean
   media?: SnapshotPresentationMedia | null

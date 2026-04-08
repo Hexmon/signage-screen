@@ -12,6 +12,8 @@ sudo systemctl status hexmon-player
 curl http://127.0.0.1:3300/healthz
 ```
 
+If `/metrics` returns `404`, check whether `observability.metricsEnabled` has been disabled intentionally. If the endpoint is unreachable from another machine, confirm the player is still using the secure default `observability.allowRemoteAccess=false`.
+
 ### View Logs
 ```bash
 # Real-time logs
@@ -478,4 +480,3 @@ valgrind --leak-check=full hexmon-signage-player
 ---
 
 **Last Updated:** 2025-01-05
-

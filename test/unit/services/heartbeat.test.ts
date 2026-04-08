@@ -70,6 +70,7 @@ describe('Heartbeat Service', () => {
     const { getPairingService } = require('../../../src/main/services/pairing-service')
     const { getCommandProcessor } = require('../../../src/main/services/command-processor')
     const { getDeviceStateStore } = require('../../../src/main/services/device-state-store')
+    const { getPlayerMetrics } = require('../../../src/main/services/telemetry/player-metrics')
 
     const heartbeatService = getHeartbeatService()
     const httpClient = getHttpClient()
@@ -133,6 +134,7 @@ describe('Heartbeat Service', () => {
     heartbeatService.setCurrentMedia('media-1')
 
     await heartbeatService.sendImmediate()
+    const metrics = await getPlayerMetrics().renderPrometheusMetrics(async () => await statsCollector.collect())
 
     expect(postStub.calledOnce).to.equal(true)
     const payload = postStub.firstCall.args[1]
@@ -188,5 +190,7 @@ describe('Heartbeat Service', () => {
     expect(payload.player_uptime_seconds).to.be.a('number')
     expect(payload.player_uptime_seconds).to.be.greaterThan(0)
     expect(updateStub.calledOnce).to.equal(true)
+    expect(metrics).to.contain('signhex_player_heartbeat_total{result="success"} 1')
+    expect(metrics).to.contain('signhex_player_last_successful_heartbeat_unixtime')
   })
 })

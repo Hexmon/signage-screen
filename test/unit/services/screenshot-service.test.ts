@@ -69,6 +69,7 @@ describe('Screenshot Service', () => {
     const { getCertificateManager } = require('../../../src/main/services/cert-manager')
     const { getHttpClient } = require('../../../src/main/services/network/http-client')
     const { getRequestQueue } = require('../../../src/main/services/network/request-queue')
+    const { getPlayerMetrics } = require('../../../src/main/services/telemetry/player-metrics')
 
     const screenshotService = getScreenshotService()
     const filepath = path.join(tempDir, 'capture.png')
@@ -94,10 +95,31 @@ describe('Screenshot Service', () => {
       thrown = error as Error
     }
 
+    const metrics = await getPlayerMetrics().renderPrometheusMetrics(async () => ({
+      cpuUsage: 0,
+      cpuCores: 4,
+      cpuLoad1m: 0,
+      cpuLoad5m: 0,
+      cpuLoad15m: 0,
+      memoryUsage: 0,
+      memoryTotal: 1,
+      memoryFree: 1,
+      diskUsage: 0,
+      diskTotal: 1,
+      diskFree: 1,
+      uptime: 0,
+      networkInterfaces: [],
+      displayCount: 1,
+      displays: [],
+      hostname: 'player-host',
+      osVersion: 'linux',
+    }))
+
     expect(thrown).to.be.instanceOf(Error)
     expect(thrown?.message).to.contain('queued for retry')
     expect(enqueueStub.calledOnce).to.equal(true)
     expect(fs.existsSync(filepath)).to.equal(false)
+    expect(metrics).to.contain('signhex_player_screenshot_upload_total{result="queued"} 1')
   })
 
   it('emits runtime auth failure and does not queue when screenshot upload gets an auth error', async () => {

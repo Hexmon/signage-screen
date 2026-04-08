@@ -118,6 +118,18 @@ frame-ancestors 'none';
 ### 7. Atomic File Operations
 
 **Implementation:**
+
+### 8. Local Metrics Surface
+
+The player exposes `/healthz` and optional `/metrics` from the local health server.
+
+Secure defaults:
+- bind to `127.0.0.1`
+- keep `observability.allowRemoteAccess=false`
+- allow `/healthz` without forcing Prometheus exposition
+- avoid permissive cross-origin access on the metrics listener
+
+If direct Prometheus scraping is approved for a site, move the bind address and firewall rules together. Do not expose the player metrics port broadly by default.
 - Write to temporary file first
 - Verify write success
 - Atomic rename to final destination
@@ -308,4 +320,3 @@ For security-related questions or concerns:
 
 **Last Updated:** 2025-01-05
 **Version:** 1.0.0
-

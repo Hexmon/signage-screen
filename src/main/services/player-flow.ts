@@ -1,6 +1,16 @@
 import { BrowserWindow } from 'electron'
 import { EventEmitter } from 'events'
-import { DeviceApiError, PairingCodeRequest, PairingCodeResponse, PairingResponse, PairingStatusResponse, PlaybackMode, PlayerState, PlayerStatus } from '../../common/types'
+import {
+  DeviceApiError,
+  PairingCodeRequest,
+  PairingCodeResponse,
+  PairingResponse,
+  PairingStatusResponse,
+  PlaybackMode,
+  PlayerState,
+  PlayerStatus,
+  TimelineItem,
+} from '../../common/types'
 import { getLogger } from '../../common/logger'
 import { getConfigManager } from '../../common/config'
 import { ExponentialBackoff } from '../../common/utils'
@@ -15,6 +25,7 @@ import { getScreenshotService } from './screenshot-service'
 import { getDefaultMediaService } from './settings/default-media-service'
 import { getLifecycleEvents, RuntimeAuthFailureEvent } from './lifecycle-events'
 import { getHttpClient } from './network/http-client'
+import { getPlayerMetrics } from './telemetry/player-metrics'
 
 const logger = getLogger('player-flow')
 const PAIRING_POLL_INTERVAL_MS = 5000
@@ -45,15 +56,16 @@ export class PlayerFlow extends EventEmitter {
   private readonly store = getDeviceStateStore()
   private readonly pairingService = getPairingService()
   private readonly lifecycleEvents = getLifecycleEvents()
-  private readonly onRuntimeAuthFailure = (event: RuntimeAuthFailureEvent) => {
+  private readonly onRuntimeAuthFailure = (event: RuntimeAuthFailureEvent): void => {
     void this.handleRuntimeAuthFailure(event)
   }
-  private readonly onDefaultMediaChanged = () => {
+  private readonly onDefaultMediaChanged = (): void => {
     this.refreshPlaybackStatusFromCurrentState()
   }
 
   constructor() {
     super()
+    getPlayerMetrics().setPlayerState(this.state)
     this.store.onChange(() => {
       this.refreshStatusFromState()
     })
@@ -64,7 +76,7 @@ export class PlayerFlow extends EventEmitter {
 
     const playbackEngine = getPlaybackEngine()
     playbackEngine.initialize(mainWindow)
-    playbackEngine.on('item-playing', (item) => {
+    playbackEngine.on('item-playing', (item: TimelineItem) => {
       this.updateStatus({
         currentMediaId: item.mediaId || item.id,
       })
@@ -84,7 +96,7 @@ export class PlayerFlow extends EventEmitter {
       error: 'Starting player...',
     })
 
-    await this.restoreCachedPlayback()
+    this.restoreCachedPlayback()
 
     const persisted = this.store.getState()
     const identity = this.pairingService.getStoredIdentityHealth()
@@ -157,7 +169,7 @@ export class PlayerFlow extends EventEmitter {
     await getSnapshotManager().refreshSnapshot()
   }
 
-  async stop(): Promise<void> {
+  stop(): void {
     this.stopPairingTimers()
     this.stopBootstrapRetryTimer()
     this.stopRuntimeLoops(false)
@@ -212,7 +224,7 @@ export class PlayerFlow extends EventEmitter {
     this.defaultMediaListenerBound = false
   }
 
-  private async restoreCachedPlayback(): Promise<void> {
+  private restoreCachedPlayback(): void {
     const cachedPlaylist = getSnapshotManager().getCurrentPlaylist()
     if (!cachedPlaylist) {
       return
@@ -225,7 +237,7 @@ export class PlayerFlow extends EventEmitter {
     this.stopPairingTimers()
     this.stopBootstrapRetryTimer()
     this.bindSnapshotListener()
-    await this.restoreCachedPlayback()
+    this.restoreCachedPlayback()
 
     await this.transitionState('BOOTSTRAP_AUTH', {
       error: 'Validating device access...',
@@ -350,22 +362,24 @@ export class PlayerFlow extends EventEmitter {
 
   private startScreenshotLoop(): void {
     this.stopScreenshotLoop()
-    const scheduleNext = () => {
+    const scheduleNext = (): void => {
       if (!this.runtimeLoopsStarted) {
         return
       }
 
       const intervalMs = getConfigManager().getConfig().intervals.screenshotMs
-      this.screenshotInterval = setTimeout(async () => {
-        try {
-          if (getScreenshotService().isCaptureEnabled()) {
-            await getScreenshotService().captureAndUpload()
+      this.screenshotInterval = setTimeout((): void => {
+        void (async (): Promise<void> => {
+          try {
+            if (getScreenshotService().isCaptureEnabled()) {
+              await getScreenshotService().captureAndUpload()
+            }
+          } catch (error) {
+            logger.warn({ error }, 'Screenshot upload failed')
+          } finally {
+            scheduleNext()
           }
-        } catch (error) {
-          logger.warn({ error }, 'Screenshot upload failed')
-        } finally {
-          scheduleNext()
-        }
+        })()
       }, intervalMs)
     }
 
@@ -390,10 +404,16 @@ export class PlayerFlow extends EventEmitter {
         retry: false,
       })
       if (response && typeof response === 'object' && (response as Record<string, unknown>)['success'] === false) {
-        throw new Error(String((response as { error?: { message?: string } }).error?.message || 'Snapshot request failed'))
+        throw new Error(
+          String((response as { error?: { message?: string } }).error?.message || 'Snapshot request failed')
+        )
       }
     } catch (error) {
-      if (error instanceof DeviceApiError && error.code === 'NOT_FOUND' && !error.message.includes('Device not registered')) {
+      if (
+        error instanceof DeviceApiError &&
+        error.code === 'NOT_FOUND' &&
+        !error.message.includes('Device not registered')
+      ) {
         return
       }
       throw error
@@ -696,7 +716,9 @@ export class PlayerFlow extends EventEmitter {
       if (this.pairingService.isExpiredPairingCodeError(error)) {
         await this.pairingService.clearPairingMetadata()
         if (currentMode === 'RECOVERY') {
-          await this.enterRecoveryRequired('Recovery pairing expired. Waiting for admin to create a new recovery pairing...')
+          await this.enterRecoveryRequired(
+            'Recovery pairing expired. Waiting for admin to create a new recovery pairing...'
+          )
         } else {
           await this.enterHardRecovery('Fresh pairing code expired before completion')
         }
@@ -734,7 +756,10 @@ export class PlayerFlow extends EventEmitter {
   }
 
   private async handleRuntimeAuthFailure(event: RuntimeAuthFailureEvent): Promise<void> {
-    logger.warn({ source: event.source, code: event.error.code, message: event.error.message }, 'Runtime auth failure received')
+    logger.warn(
+      { source: event.source, code: event.error.code, message: event.error.message },
+      'Runtime auth failure received'
+    )
 
     if (
       this.state === 'PAIRING_PENDING' ||
@@ -772,6 +797,7 @@ export class PlayerFlow extends EventEmitter {
   private async transitionState(next: PlayerState, statusPatch: Partial<PlayerStatus> = {}): Promise<void> {
     this.state = next
     await this.store.setLifecycleState(next)
+    getPlayerMetrics().setPlayerState(next)
 
     if (next === 'PAIRING_PENDING' || next === 'PAIRING_CONFIRMED' || next === 'PAIRING_COMPLETING') {
       this.updateStatus({
@@ -798,6 +824,7 @@ export class PlayerFlow extends EventEmitter {
       hardRecoveryDeadlineAt: persisted.hardRecoveryDeadlineAt,
       lastHeartbeatAt: persisted.lastHeartbeatAt,
     }
+    getPlayerMetrics().setPlayerState(this.status.state)
     this.emitStatus()
   }
 

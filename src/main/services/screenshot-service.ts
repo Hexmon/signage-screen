@@ -15,6 +15,7 @@ import { getCertificateManager } from './cert-manager'
 import { getRequestQueue } from './network/request-queue'
 import { getLifecycleEvents } from './lifecycle-events'
 import { atomicWrite, ensureDir, generateId } from '../../common/utils'
+import { getPlayerMetrics } from './telemetry/player-metrics'
 
 const logger = getLogger('screenshot-service')
 
@@ -46,7 +47,9 @@ export class ScreenshotService {
     return this.captureEnabled
   }
 
-  applyPolicy(policy: Partial<ScreenshotPolicyResponse> & { interval_ms?: number | null; intervalMs?: number | null }): {
+  applyPolicy(
+    policy: Partial<ScreenshotPolicyResponse> & { interval_ms?: number | null; intervalMs?: number | null }
+  ): {
     enabled: boolean
     intervalMs?: number
   } {
@@ -133,6 +136,7 @@ export class ScreenshotService {
    * Upload screenshot to backend
    */
   async uploadScreenshot(filepath: string): Promise<string> {
+    const metrics = getPlayerMetrics()
     const pairingService = getPairingService()
     const deviceId = pairingService.getDeviceId()
 
@@ -176,17 +180,22 @@ export class ScreenshotService {
       }
 
       logger.info({ objectKey: response?.object_key }, 'Screenshot uploaded successfully')
+      metrics.recordScreenshotUpload('success')
 
       // Delete local file after successful upload
       fs.unlinkSync(filepath)
 
       return response?.object_key || ''
     } catch (error) {
-      if (error instanceof DeviceApiError && (error.code === 'UNAUTHORIZED' || error.code === 'FORBIDDEN' || error.code === 'NOT_FOUND')) {
+      if (
+        error instanceof DeviceApiError &&
+        (error.code === 'UNAUTHORIZED' || error.code === 'FORBIDDEN' || error.code === 'NOT_FOUND')
+      ) {
         getLifecycleEvents().emitRuntimeAuthFailure({
           source: 'screenshot',
           error,
         })
+        metrics.recordScreenshotUpload('auth_failure')
         throw error
       }
 
@@ -207,8 +216,10 @@ export class ScreenshotService {
           maxRetries: 3,
         })
         logger.info('Screenshot enqueued for retry')
+        metrics.recordScreenshotUpload('queued')
       } catch (queueError) {
         logger.error({ error: queueError }, 'Failed to enqueue screenshot for retry')
+        metrics.recordScreenshotUpload('failed')
       } finally {
         try {
           fs.unlinkSync(filepath)
@@ -250,7 +261,7 @@ export class ScreenshotService {
   /**
    * Cleanup old screenshots
    */
-  async cleanupOldScreenshots(maxAgeMs: number = 24 * 60 * 60 * 1000): Promise<void> {
+  cleanupOldScreenshots(maxAgeMs: number = 24 * 60 * 60 * 1000): void {
     logger.info({ maxAgeMs }, 'Cleaning up old screenshots')
 
     try {

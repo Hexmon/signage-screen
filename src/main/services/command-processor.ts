@@ -12,6 +12,7 @@ import { getScreenshotService } from './screenshot-service'
 import { getDeviceStateStore } from './device-state-store'
 import { getLifecycleEvents } from './lifecycle-events'
 import { getDefaultMediaService } from './settings/default-media-service'
+import { getPlayerMetrics } from './telemetry/player-metrics'
 
 const logger = getLogger('command-processor')
 
@@ -55,11 +56,12 @@ export class CommandProcessor {
       const command = this.normalizeCommand(rawCommand)
       if (getDeviceStateStore().hasRecentCommand(command.id)) {
         logger.debug({ commandId: command.id, source }, 'Skipping previously seen command')
+        getPlayerMetrics().recordCommandOutcome(command.type, source, 'deduplicated')
         continue
       }
 
       await getDeviceStateStore().recordCommandSeen(command.id, source)
-      await this.processCommand(command)
+      await this.processCommand(command, source)
     }
   }
 
@@ -80,7 +82,10 @@ export class CommandProcessor {
       })
       await this.ingestCommands(response.commands || [], 'poll')
     } catch (error) {
-      if (error instanceof DeviceApiError && (error.code === 'UNAUTHORIZED' || error.code === 'FORBIDDEN' || error.code === 'NOT_FOUND')) {
+      if (
+        error instanceof DeviceApiError &&
+        (error.code === 'UNAUTHORIZED' || error.code === 'FORBIDDEN' || error.code === 'NOT_FOUND')
+      ) {
         getLifecycleEvents().emitRuntimeAuthFailure({
           source: 'command-poll',
           error,
@@ -102,9 +107,12 @@ export class CommandProcessor {
       clearTimeout(this.pollTimer)
     }
 
-    this.pollTimer = setTimeout(() => {
-      void this.evaluatePollingState()
-    }, Math.max(0, Math.round(delayMs)))
+    this.pollTimer = setTimeout(
+      () => {
+        void this.evaluatePollingState()
+      },
+      Math.max(0, Math.round(delayMs))
+    )
   }
 
   private async evaluatePollingState(): Promise<void> {
@@ -125,7 +133,10 @@ export class CommandProcessor {
 
   private getHealthyHeartbeatDelay(): number {
     const config = getConfigManager().getConfig()
-    const staleAfterMs = Math.max(config.intervals.heartbeatMs * HEARTBEAT_STALE_MULTIPLIER, config.intervals.commandPollMs)
+    const staleAfterMs = Math.max(
+      config.intervals.heartbeatMs * HEARTBEAT_STALE_MULTIPLIER,
+      config.intervals.commandPollMs
+    )
     const lastHeartbeatAt = getDeviceStateStore().getState().lastHeartbeatAt
     if (!lastHeartbeatAt) {
       return 0
@@ -171,12 +182,13 @@ export class CommandProcessor {
     }
   }
 
-  private async processCommand(command: Command): Promise<void> {
+  private async processCommand(command: Command, source: CommandSource): Promise<void> {
     if (this.processingCommands.has(command.id)) {
       return
     }
 
     if (this.isRateLimited(command.type)) {
+      getPlayerMetrics().recordCommandOutcome(command.type, source, 'rate_limited')
       await this.acknowledgeCommand(command.id, {
         success: false,
         error: 'Rate limited',
@@ -192,7 +204,7 @@ export class CommandProcessor {
 
       switch (command.type) {
         case 'REBOOT':
-          result = await this.handleReboot()
+          result = this.handleReboot()
           break
         case 'REFRESH':
         case 'REFRESH_SCHEDULE':
@@ -202,16 +214,16 @@ export class CommandProcessor {
           result = await this.handleScreenshot()
           break
         case 'SET_SCREENSHOT_INTERVAL':
-          result = await this.handleSetScreenshotInterval(command)
+          result = this.handleSetScreenshotInterval(command)
           break
         case 'TEST_PATTERN':
-          result = await this.handleTestPattern()
+          result = this.handleTestPattern()
           break
         case 'CLEAR_CACHE':
           result = await this.handleClearCache(command)
           break
         case 'PING':
-          result = await this.handlePing()
+          result = this.handlePing()
           break
         default:
           result = {
@@ -221,6 +233,7 @@ export class CommandProcessor {
           }
       }
 
+      getPlayerMetrics().recordCommandOutcome(command.type, source, result.success ? 'success' : 'error')
       this.commandHistory.set(command.id, result)
       if (this.commandHistory.size > this.maxHistorySize) {
         const oldest = this.commandHistory.keys().next().value
@@ -233,6 +246,7 @@ export class CommandProcessor {
       this.updateRateLimit(command.type)
     } catch (error) {
       logger.error({ error, commandId: command.id }, 'Command processing failed')
+      getPlayerMetrics().recordCommandOutcome(command.type, source, 'error')
       await this.acknowledgeCommand(command.id, {
         success: false,
         error: (error as Error).message,
@@ -243,7 +257,7 @@ export class CommandProcessor {
     }
   }
 
-  private async handleReboot(): Promise<CommandResult> {
+  private handleReboot(): CommandResult {
     setTimeout(() => {
       app.relaunch()
       app.quit()
@@ -280,7 +294,7 @@ export class CommandProcessor {
     }
   }
 
-  private async handleSetScreenshotInterval(command: Command): Promise<CommandResult> {
+  private handleSetScreenshotInterval(command: Command): CommandResult {
     const screenshotService = getScreenshotService()
     const enabledParam = command.params?.['enabled']
     const enabled = typeof enabledParam === 'boolean' ? enabledParam : true
@@ -316,7 +330,7 @@ export class CommandProcessor {
     }
   }
 
-  private async handleTestPattern(): Promise<CommandResult> {
+  private handleTestPattern(): CommandResult {
     return {
       success: true,
       message: 'Test pattern command acknowledged',
@@ -334,7 +348,7 @@ export class CommandProcessor {
     }
   }
 
-  private async handlePing(): Promise<CommandResult> {
+  private handlePing(): CommandResult {
     return {
       success: true,
       message: 'Pong',
@@ -349,26 +363,36 @@ export class CommandProcessor {
   private async acknowledgeCommand(commandId: string, result: CommandResult): Promise<void> {
     const deviceId = getPairingService().getDeviceId()
     if (!deviceId) {
+      getPlayerMetrics().recordCommandAck('skipped_unpaired')
       return
     }
 
     try {
       const httpClient = getHttpClient()
-      await httpClient.post(`/api/v1/device/${deviceId}/commands/${commandId}/ack`, {}, {
-        retryPolicy: {
-          maxAttempts: 3,
-          baseDelayMs: 2000,
-          maxDelayMs: 30000,
-        },
-      })
+      await httpClient.post(
+        `/api/v1/device/${deviceId}/commands/${commandId}/ack`,
+        {},
+        {
+          retryPolicy: {
+            maxAttempts: 3,
+            baseDelayMs: 2000,
+            maxDelayMs: 30000,
+          },
+        }
+      )
       await getDeviceStateStore().recordCommandAcknowledged(commandId)
       logger.debug({ commandId, success: result.success }, 'Command acknowledged')
+      getPlayerMetrics().recordCommandAck('success')
     } catch (error) {
-      if (error instanceof DeviceApiError && (error.code === 'UNAUTHORIZED' || error.code === 'FORBIDDEN' || error.code === 'NOT_FOUND')) {
+      if (
+        error instanceof DeviceApiError &&
+        (error.code === 'UNAUTHORIZED' || error.code === 'FORBIDDEN' || error.code === 'NOT_FOUND')
+      ) {
         getLifecycleEvents().emitRuntimeAuthFailure({
           source: 'command-ack',
           error,
         })
+        getPlayerMetrics().recordCommandAck('auth_failure')
         return
       }
 
@@ -379,6 +403,7 @@ export class CommandProcessor {
         data: {},
         maxRetries: 3,
       })
+      getPlayerMetrics().recordCommandAck('queued')
     }
   }
 

@@ -44,5 +44,12 @@
     "contextIsolation": true,
     "nodeIntegration": false,
     "sandbox": true
+  },
+  "observability": {
+    "enabled": true,
+    "metricsEnabled": true,
+    "bindAddress": "127.0.0.1",
+    "port": 3300,
+    "allowRemoteAccess": false
   }
 }

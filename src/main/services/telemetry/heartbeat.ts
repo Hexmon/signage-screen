@@ -12,6 +12,7 @@ import { getSystemStatsCollector } from './system-stats'
 import { getDeviceStateStore } from '../device-state-store'
 import { getLifecycleEvents } from '../lifecycle-events'
 import { getCommandProcessor } from '../command-processor'
+import { getPlayerMetrics } from './player-metrics'
 
 const logger = getLogger('heartbeat')
 
@@ -37,13 +38,13 @@ export class HeartbeatService {
 
     this.isRunning = true
     this.interval = setInterval(() => {
-      this.sendHeartbeat().catch((error) => {
+      this.sendHeartbeat().catch((error: unknown) => {
         logger.error({ error }, 'Failed to send heartbeat')
       })
     }, intervalMs)
 
     // Send initial heartbeat
-    this.sendHeartbeat().catch((error) => {
+    this.sendHeartbeat().catch((error: unknown) => {
       logger.error({ error }, 'Failed to send initial heartbeat')
     })
   }
@@ -157,20 +158,22 @@ export class HeartbeatService {
    * Send heartbeat to backend
    */
   private async sendHeartbeat(): Promise<void> {
-    let stats:
-      | SystemStats
-      | undefined
+    const startedAt = Date.now()
+    let stats: SystemStats | undefined
+    const metrics = getPlayerMetrics()
 
     try {
       const pairingService = getPairingService()
       if (!pairingService.isPairedDevice()) {
         logger.debug('Device not paired, skipping heartbeat')
+        metrics.safeRecordHeartbeat('skipped_unpaired', (Date.now() - startedAt) / 1000)
         return
       }
 
       const deviceId = pairingService.getDeviceId()
       if (!deviceId) {
         logger.warn('No device ID available')
+        metrics.safeRecordHeartbeat('missing_device_id', (Date.now() - startedAt) / 1000)
         return
       }
 
@@ -198,18 +201,24 @@ export class HeartbeatService {
       await getDeviceStateStore().update({
         lastHeartbeatAt: response.timestamp || new Date().toISOString(),
       })
+      metrics.setLastSuccessfulHeartbeat(response.timestamp || Date.now())
 
       if (Array.isArray(response.commands) && response.commands.length > 0) {
         await getCommandProcessor().ingestCommands(response.commands, 'heartbeat')
       }
 
       logger.debug({ deviceId }, 'Heartbeat sent successfully')
+      metrics.safeRecordHeartbeat('success', (Date.now() - startedAt) / 1000)
     } catch (error) {
-      if (error instanceof DeviceApiError && (error.code === 'UNAUTHORIZED' || error.code === 'FORBIDDEN' || error.code === 'NOT_FOUND')) {
+      if (
+        error instanceof DeviceApiError &&
+        (error.code === 'UNAUTHORIZED' || error.code === 'FORBIDDEN' || error.code === 'NOT_FOUND')
+      ) {
         getLifecycleEvents().emitRuntimeAuthFailure({
           source: 'heartbeat',
           error,
         })
+        metrics.safeRecordHeartbeat('auth_failure', (Date.now() - startedAt) / 1000)
         return
       }
 
@@ -217,21 +226,27 @@ export class HeartbeatService {
 
       // Queue for later if offline
       const requestQueue = getRequestQueue()
-      await requestQueue.enqueue({
-        method: 'POST',
-        url: '/api/v1/device/heartbeat',
-        data:
-          stats && getPairingService().getDeviceId()
-            ? this.buildHeartbeatPayload(getPairingService().getDeviceId() as string, 'OFFLINE', stats)
-            : {
-                device_id: getPairingService().getDeviceId(),
-                status: 'OFFLINE',
-                uptime: 0,
-                memory_usage: 0,
-                cpu_usage: 0,
-              },
-        maxRetries: 3,
-      })
+      try {
+        await requestQueue.enqueue({
+          method: 'POST',
+          url: '/api/v1/device/heartbeat',
+          data:
+            stats && getPairingService().getDeviceId()
+              ? this.buildHeartbeatPayload(getPairingService().getDeviceId() as string, 'OFFLINE', stats)
+              : {
+                  device_id: getPairingService().getDeviceId(),
+                  status: 'OFFLINE',
+                  uptime: 0,
+                  memory_usage: 0,
+                  cpu_usage: 0,
+                },
+          maxRetries: 3,
+        })
+        metrics.safeRecordHeartbeat('queued', (Date.now() - startedAt) / 1000)
+      } catch (queueError) {
+        metrics.safeRecordHeartbeat('failed', (Date.now() - startedAt) / 1000)
+        throw queueError
+      }
     }
   }
 

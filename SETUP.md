@@ -719,6 +719,8 @@ curl -s http://127.0.0.1:3300/healthz | jq .
 curl http://127.0.0.1:3300/metrics
 ```
 
+The metrics endpoint is enabled by default but remains loopback-bound unless `observability.allowRemoteAccess=true` is explicitly configured. To disable Prometheus exposition while keeping `/healthz`, set `observability.metricsEnabled=false`.
+
 #### Diagnostics Overlay
 
 Press `Ctrl+Shift+D` on the display to toggle diagnostics overlay showing:
