@@ -31,7 +31,21 @@ const logger = getLogger('pop-service')
 interface ActivePlayback {
   scheduleId: string
   mediaId: string
+  playbackInstanceId: string
+  sceneId?: string
+  slotId?: string
+  itemId?: string
   startTimestamp: string
+}
+
+interface PlaybackStartInput {
+  scheduleId: string
+  mediaId: string
+  playbackInstanceId: string
+  sceneId?: string
+  slotId?: string
+  itemId?: string
+  startedAt?: string
 }
 
 interface BufferedProofOfPlayEvent extends ProofOfPlayEvent {
@@ -53,6 +67,10 @@ function stripReplayMetadata(event: BufferedProofOfPlayEvent | ProofOfPlayEvent)
     device_id: event.device_id,
     schedule_id: event.schedule_id,
     media_id: event.media_id,
+    playback_instance_id: event.playback_instance_id,
+    scene_id: event.scene_id,
+    slot_id: event.slot_id,
+    item_id: event.item_id,
     start_time: event.start_time,
     end_time: event.end_time,
     duration: event.duration,
@@ -105,25 +123,70 @@ export class ProofOfPlayService {
     )
   }
 
-  recordStart(scheduleId: string, mediaId: string): void {
-    const key = `${scheduleId}:${mediaId}`
-    const startTimestamp = new Date().toISOString()
+  recordStart(inputOrScheduleId: PlaybackStartInput | string, mediaId?: string): void {
+    const normalizedInput: PlaybackStartInput =
+      typeof inputOrScheduleId === 'string'
+        ? {
+            scheduleId: inputOrScheduleId,
+            mediaId: mediaId || inputOrScheduleId,
+            playbackInstanceId: `${inputOrScheduleId}:${mediaId || inputOrScheduleId}`,
+          }
+        : inputOrScheduleId
 
-    this.activePlaybacks.set(key, {
-      scheduleId,
-      mediaId,
+    const startTimestamp = normalizedInput.startedAt || new Date().toISOString()
+
+    this.activePlaybacks.set(normalizedInput.playbackInstanceId, {
+      scheduleId: normalizedInput.scheduleId,
+      mediaId: normalizedInput.mediaId,
+      playbackInstanceId: normalizedInput.playbackInstanceId,
+      sceneId: normalizedInput.sceneId,
+      slotId: normalizedInput.slotId,
+      itemId: normalizedInput.itemId,
       startTimestamp,
     })
 
-    logger.debug({ scheduleId, mediaId, startTimestamp }, 'Playback started')
+    logger.debug(
+      {
+        scheduleId: normalizedInput.scheduleId,
+        mediaId: normalizedInput.mediaId,
+        playbackInstanceId: normalizedInput.playbackInstanceId,
+        sceneId: normalizedInput.sceneId,
+        slotId: normalizedInput.slotId,
+        startTimestamp,
+      },
+      'Playback started'
+    )
   }
 
-  recordEnd(scheduleId: string, mediaId: string, completed: boolean, errorMessage?: string): void {
-    const key = `${scheduleId}:${mediaId}`
-    const active = this.activePlaybacks.get(key)
+  recordEnd(
+    playbackOrScheduleId: string,
+    mediaIdOrCompleted: string | boolean,
+    completedOrError?: boolean | string,
+    errorMessage?: string,
+  ): void {
+    const playbackInstanceId =
+      typeof mediaIdOrCompleted === 'string'
+        ? `${playbackOrScheduleId}:${mediaIdOrCompleted}`
+        : playbackOrScheduleId
+    const completed =
+      typeof mediaIdOrCompleted === 'boolean'
+        ? mediaIdOrCompleted
+        : typeof completedOrError === 'boolean'
+          ? completedOrError
+          : true
+    const resolvedErrorMessage =
+      typeof mediaIdOrCompleted === 'string'
+        ? typeof errorMessage === 'string'
+          ? errorMessage
+          : undefined
+        : typeof completedOrError === 'string'
+          ? completedOrError
+          : errorMessage
+
+    const active = this.activePlaybacks.get(playbackInstanceId)
 
     if (!active) {
-      logger.warn({ scheduleId, mediaId }, 'No active playback found for end event')
+      logger.warn({ playbackInstanceId }, 'No active playback found for end event')
       return
     }
 
@@ -135,8 +198,16 @@ export class ProofOfPlayService {
     const pairingService = getPairingService()
     const deviceId = pairingService.getDeviceId()
 
-    if (errorMessage) {
-      logger.warn({ scheduleId, mediaId, errorMessage }, 'Playback ended with error message')
+    if (resolvedErrorMessage) {
+      logger.warn(
+        {
+          scheduleId: active.scheduleId,
+          mediaId: active.mediaId,
+          playbackInstanceId: active.playbackInstanceId,
+          errorMessage: resolvedErrorMessage,
+        },
+        'Playback ended with error message'
+      )
     }
 
     if (!deviceId) {
@@ -147,8 +218,12 @@ export class ProofOfPlayService {
     const event: BufferedProofOfPlayEvent = {
       source: 'live',
       device_id: deviceId,
-      schedule_id: scheduleId,
-      media_id: mediaId,
+      schedule_id: active.scheduleId,
+      media_id: active.mediaId,
+      playback_instance_id: active.playbackInstanceId,
+      scene_id: active.sceneId,
+      slot_id: active.slotId,
+      item_id: active.itemId,
       start_time: active.startTimestamp,
       end_time: endTimestamp,
       duration: durationSeconds,
@@ -160,7 +235,16 @@ export class ProofOfPlayService {
       this.trimLiveBuffer().catch((error) => {
         logger.error({ error }, 'Failed to trim PoP buffer')
       })
-      logger.debug({ scheduleId, mediaId, durationSeconds, completed }, 'Playback ended')
+      logger.debug(
+        {
+          scheduleId: active.scheduleId,
+          mediaId: active.mediaId,
+          playbackInstanceId: active.playbackInstanceId,
+          durationSeconds,
+          completed,
+        },
+        'Playback ended'
+      )
 
       if (this.eventBuffer.length >= POP_REPLAY_BUFFER_MAX_EVENTS) {
         this.flushEvents().catch((error) => {
@@ -168,14 +252,14 @@ export class ProofOfPlayService {
         })
       }
     } else {
-      logger.debug({ scheduleId, mediaId }, 'Duplicate event detected, skipping')
+      logger.debug({ playbackInstanceId: active.playbackInstanceId }, 'Duplicate event detected, skipping')
     }
 
-    this.activePlaybacks.delete(key)
+    this.activePlaybacks.delete(playbackInstanceId)
   }
 
   private isDuplicate(event: ProofOfPlayEvent): boolean {
-    const key = `${event.device_id}:${event.media_id}:${event.start_time}`
+    const key = `${event.device_id}:${event.playback_instance_id}`
     if (this.seenEvents.has(key)) {
       return true
     }
@@ -594,6 +678,10 @@ export class ProofOfPlayService {
       device_id: event.device_id || event.deviceId || pairingService.getDeviceId() || '',
       schedule_id: event.schedule_id || event.scheduleId || '',
       media_id: event.media_id || event.mediaId || '',
+      playback_instance_id: event.playback_instance_id || event.playbackInstanceId || generateId(16),
+      scene_id: event.scene_id || event.sceneId,
+      slot_id: event.slot_id || event.slotId,
+      item_id: event.item_id || event.itemId,
       start_time: event.start_time || event.startTimestamp || event.start_timestamp || new Date().toISOString(),
       end_time: event.end_time || event.endTimestamp || event.end_timestamp || new Date().toISOString(),
       duration: normalizedDuration,

@@ -3,6 +3,7 @@
  * Coordinates timeline scheduling, media rendering, and transitions
  */
 
+import { randomUUID } from 'crypto'
 import { BrowserWindow } from 'electron'
 import { EventEmitter } from 'events'
 import { getLogger } from '../../../common/logger'
@@ -28,6 +29,7 @@ export class PlaybackEngine extends EventEmitter {
   private currentItem?: TimelineItem
   private currentScheduleId?: string
   private currentTimelineFingerprint?: string
+  private currentPlaybackInstanceId?: string
   private errorCount = 0
   private maxErrors = 5
 
@@ -91,6 +93,11 @@ export class PlaybackEngine extends EventEmitter {
 
     this.scheduler.stop()
     this.state = 'stopped'
+    if (this.currentPlaybackInstanceId) {
+      const popService = getProofOfPlayService()
+      popService.recordEnd(this.currentPlaybackInstanceId, false)
+      this.currentPlaybackInstanceId = undefined
+    }
     this.currentItem = undefined
     this.currentScheduleId = undefined
     this.currentTimelineFingerprint = undefined
@@ -218,6 +225,7 @@ export class PlaybackEngine extends EventEmitter {
   private async handlePlayItem(scheduledItem: ScheduledItem): Promise<void> {
     const item = scheduledItem.item
     this.currentItem = item
+    this.currentPlaybackInstanceId = undefined
 
     logger.info(
       {
@@ -229,27 +237,39 @@ export class PlaybackEngine extends EventEmitter {
     )
 
     // Mark as now-playing in cache
-    const mediaId = item.mediaId || item.objectKey
-    if (mediaId) {
+    const mediaId = item.mediaId || item.objectKey || item.id
+    if (item.type !== 'scene' && mediaId) {
       const cacheManager = getCacheManager()
       cacheManager.markNowPlaying(mediaId)
     }
 
     // Record proof-of-play start
-    if (this.currentScheduleId) {
+    if (this.currentScheduleId && item.type !== 'scene') {
       const popService = getProofOfPlayService()
-      popService.recordStart(this.currentScheduleId, item.mediaId || item.id)
+      this.currentPlaybackInstanceId = randomUUID()
+      popService.recordStart({
+        scheduleId: this.currentScheduleId,
+        mediaId,
+        playbackInstanceId: this.currentPlaybackInstanceId,
+        itemId: item.id,
+        startedAt: new Date(scheduledItem.startTime).toISOString(),
+      })
     }
 
     // Update telemetry
     const telemetryService = getTelemetryService()
-    telemetryService.setCurrentMedia(item.mediaId || item.id)
+    if (item.type === 'scene') {
+      telemetryService.setActivePlayback(item.id, [])
+    } else {
+      telemetryService.setCurrentMedia(mediaId)
+    }
 
     // Send to renderer
     if (this.mainWindow) {
       this.mainWindow.webContents.send('media-change', {
         item,
         scheduledItem,
+        scheduleId: this.currentScheduleId,
       })
     }
 
@@ -265,16 +285,17 @@ export class PlaybackEngine extends EventEmitter {
     logger.debug({ itemId: item.id }, 'Item completed')
 
     // Unmark as now-playing in cache
-    const mediaId = item.mediaId || item.objectKey
-    if (mediaId) {
+    const mediaId = item.mediaId || item.objectKey || item.id
+    if (item.type !== 'scene' && mediaId) {
       const cacheManager = getCacheManager()
       cacheManager.unmarkNowPlaying(mediaId)
     }
 
     // Record proof-of-play end
-    if (this.currentScheduleId) {
+    if (this.currentPlaybackInstanceId && item.type !== 'scene') {
       const popService = getProofOfPlayService()
-      popService.recordEnd(this.currentScheduleId, item.mediaId || item.id, true)
+      popService.recordEnd(this.currentPlaybackInstanceId, true)
+      this.currentPlaybackInstanceId = undefined
     }
 
     this.emit('item-completed', item)
@@ -297,6 +318,7 @@ export class PlaybackEngine extends EventEmitter {
         type: 'transition-start',
         current: current.item,
         next: next.item,
+        scheduleId: this.currentScheduleId,
         durationMs: current.item.transitionDurationMs || 0,
       })
     }

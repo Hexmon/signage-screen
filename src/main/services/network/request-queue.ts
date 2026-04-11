@@ -411,7 +411,7 @@ export class RequestQueue {
     }, delay)
   }
 
-  async enqueue(request: Omit<QueuedRequest, 'id' | 'timestamp' | 'retries' | 'sizeBytes' | 'category'>): Promise<void> {
+  async enqueue(request: Omit<QueuedRequest, 'id' | 'timestamp' | 'retries' | 'sizeBytes' | 'category'>): Promise<boolean> {
     const queuedRequest: QueuedRequest = {
       ...request,
       id: `req_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
@@ -424,7 +424,16 @@ export class RequestQueue {
 
     if (!this.evictForIncoming(queuedRequest)) {
       await this.persist()
-      return
+      logger.warn(
+        {
+          method: queuedRequest.method,
+          url: queuedRequest.url,
+          category: queuedRequest.category,
+          sizeBytes: queuedRequest.sizeBytes,
+        },
+        'Request queue rejected incoming payload'
+      )
+      return false
     }
 
     this.queue.push(queuedRequest)
@@ -442,6 +451,8 @@ export class RequestQueue {
       },
       'Request queued'
     )
+
+    return true
   }
 
   private selectReplayBatch(now: number): QueuedRequest[] {

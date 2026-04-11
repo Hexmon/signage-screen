@@ -136,4 +136,21 @@ describe('Request Queue', () => {
     expect(postStub.callCount).to.equal(5)
     expect(requestQueue.getSize()).to.equal(8)
   })
+
+  it('returns false when an incoming request cannot fit within queue budgets', async () => {
+    const { getRequestQueue } = require('../../../src/main/services/network/request-queue')
+    const requestQueue = getRequestQueue()
+
+    const accepted = await requestQueue.enqueue({
+      method: 'POST',
+      url: '/api/v1/device/screenshot',
+      data: {
+        image_data: 'x'.repeat(700 * 1024),
+      },
+      maxRetries: 3,
+    })
+
+    expect(accepted).to.equal(false)
+    expect(requestQueue.getSize()).to.equal(0)
+  })
 })

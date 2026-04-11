@@ -86,7 +86,7 @@ describe('Screenshot Service', () => {
     })
 
     sandbox.stub(getHttpClient(), 'post').rejects(new Error('backend unavailable'))
-    const enqueueStub = sandbox.stub(getRequestQueue(), 'enqueue').resolves()
+    const enqueueStub = sandbox.stub(getRequestQueue(), 'enqueue').resolves(true)
 
     let thrown: Error | null = null
     try {
@@ -152,7 +152,7 @@ describe('Screenshot Service', () => {
     })
 
     sandbox.stub(getHttpClient(), 'post').rejects(authError)
-    const enqueueStub = sandbox.stub(getRequestQueue(), 'enqueue').resolves()
+    const enqueueStub = sandbox.stub(getRequestQueue(), 'enqueue').resolves(true)
     const emitStub = sandbox.stub(getLifecycleEvents(), 'emitRuntimeAuthFailure').returns(true)
 
     let thrown: unknown
@@ -167,6 +167,63 @@ describe('Screenshot Service', () => {
     expect(emitStub.firstCall.args[0].source).to.equal('screenshot')
     expect(enqueueStub.called).to.equal(false)
     expect(fs.existsSync(filepath)).to.equal(true)
+  })
+
+  it('does not claim a screenshot was queued when the retry queue rejects it', async () => {
+    const { getScreenshotService } = require('../../../src/main/services/screenshot-service')
+    const { getPairingService } = require('../../../src/main/services/pairing-service')
+    const { getCertificateManager } = require('../../../src/main/services/cert-manager')
+    const { getHttpClient } = require('../../../src/main/services/network/http-client')
+    const { getRequestQueue } = require('../../../src/main/services/network/request-queue')
+    const { getPlayerMetrics } = require('../../../src/main/services/telemetry/player-metrics')
+
+    const screenshotService = getScreenshotService()
+    const filepath = path.join(tempDir, 'capture-drop.png')
+    fs.writeFileSync(filepath, Buffer.from('fake-image-data'))
+
+    sandbox.stub(getPairingService(), 'getDeviceId').returns('11111111-1111-4111-8111-111111111111')
+    sandbox.stub(getCertificateManager(), 'getCertificateMetadata').returns({
+      serialNumber: 'serial-1',
+      fingerprint: 'fingerprint-1',
+      validFrom: '2026-03-12T00:00:00.000Z',
+      validTo: '2027-03-12T00:00:00.000Z',
+      subject: 'CN=device',
+      issuer: 'CN=ca',
+    })
+
+    sandbox.stub(getHttpClient(), 'post').rejects(new Error('backend unavailable'))
+    sandbox.stub(getRequestQueue(), 'enqueue').resolves(false)
+
+    let thrown: Error | null = null
+    try {
+      await screenshotService.uploadScreenshot(filepath)
+    } catch (error) {
+      thrown = error as Error
+    }
+
+    const metrics = await getPlayerMetrics().renderPrometheusMetrics(async () => ({
+      cpuUsage: 0,
+      cpuCores: 4,
+      cpuLoad1m: 0,
+      cpuLoad5m: 0,
+      cpuLoad15m: 0,
+      memoryUsage: 0,
+      memoryTotal: 1,
+      memoryFree: 1,
+      diskUsage: 0,
+      diskTotal: 1,
+      diskFree: 1,
+      uptime: 0,
+      networkInterfaces: [],
+      displayCount: 1,
+      displays: [],
+      hostname: 'player-host',
+      osVersion: 'linux',
+    }))
+
+    expect(thrown).to.be.instanceOf(Error)
+    expect(thrown?.message).to.equal('backend unavailable')
+    expect(metrics).to.contain('signhex_player_screenshot_upload_total{result="failed"} 1')
   })
 
   it('tracks whether scheduled screenshot capture is enabled', async () => {

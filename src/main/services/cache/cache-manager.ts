@@ -92,15 +92,15 @@ export class CacheManager {
     return total
   }
 
-  private async evictIfNeeded(sizeNeeded: number): Promise<void> {
+  private async evictIfNeeded(sizeNeeded: number): Promise<boolean> {
     if (sizeNeeded > this.maxBytes && this.maxBytes > 0) {
       logger.warn({ sizeNeeded, maxBytes: this.maxBytes }, 'Item exceeds cache capacity, skipping eviction')
-      return
+      return false
     }
 
     let available = this.maxBytes - this.getUsedBytes()
     if (available >= sizeNeeded) {
-      return
+      return true
     }
 
     const candidates = Array.from(this.entries.values())
@@ -120,7 +120,10 @@ export class CacheManager {
         { sizeNeeded, available, protected: Array.from(this.nowPlaying) },
         'Not enough space to evict without touching now-playing items'
       )
+      return false
     }
+
+    return true
   }
 
   private async removeEntry(entry: CacheEntry): Promise<void> {
@@ -178,7 +181,14 @@ export class CacheManager {
       throw new CacheError('Cache item failed integrity validation', { expected: sha256, actual: hash })
     }
 
-    await this.evictIfNeeded(data.length)
+    const canStore = await this.evictIfNeeded(data.length)
+    if (!canStore) {
+      throw new CacheError('Cache budget exceeded and protected items prevented eviction', {
+        reason: 'INSUFFICIENT_SPACE',
+        mediaId,
+        sizeNeeded: data.length,
+      })
+    }
 
     const filePath = this.getFilePath(mediaId, url)
     await atomicWrite(filePath, data)
@@ -278,6 +288,10 @@ export class CacheManager {
 
   unmarkNowPlaying(mediaId: string): void {
     this.nowPlaying.delete(mediaId)
+  }
+
+  replaceNowPlaying(mediaIds: string[]): void {
+    this.nowPlaying = new Set(mediaIds.filter(Boolean))
   }
 
   async clear(force: boolean = false): Promise<void> {

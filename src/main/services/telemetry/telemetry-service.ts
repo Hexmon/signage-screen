@@ -3,6 +3,7 @@
  */
 
 import { getLogger } from '../../../common/logger'
+import type { ActiveSlotPlayback } from '../../../common/types'
 import { getSystemStatsCollector } from './system-stats'
 import { getHeartbeatService } from './heartbeat'
 import { getHealthServer } from './health-server'
@@ -98,6 +99,11 @@ export class TelemetryService {
   setCurrentMedia(mediaId: string): void {
     const heartbeatService = getHeartbeatService()
     heartbeatService.setCurrentMedia(mediaId)
+  }
+
+  setActivePlayback(sceneId: string | undefined, activeSlots: ActiveSlotPlayback[]): void {
+    const heartbeatService = getHeartbeatService()
+    heartbeatService.setActivePlayback(sceneId, activeSlots)
   }
 
   clearCurrentPlayback(): void {

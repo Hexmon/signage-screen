@@ -4,7 +4,7 @@
 
 import { getLogger } from '../../../common/logger'
 import { getConfigManager } from '../../../common/config'
-import { Command, DeviceApiError, HeartbeatPayload, SystemStats } from '../../../common/types'
+import { ActiveSlotPlayback, Command, DeviceApiError, HeartbeatPayload, SystemStats } from '../../../common/types'
 import { getHttpClient } from '../network/http-client'
 import { getRequestQueue } from '../network/request-queue'
 import { getPairingService } from '../pairing-service'
@@ -21,6 +21,8 @@ export class HeartbeatService {
   private isRunning = false
   private currentScheduleId?: string
   private currentMediaId?: string
+  private currentSceneId?: string
+  private activeSlots: ActiveSlotPlayback[] = []
   private inFlightHeartbeat?: Promise<void>
 
   /**
@@ -168,6 +170,8 @@ export class HeartbeatService {
       temperature: stats.temperature,
       current_schedule_id: this.currentScheduleId,
       current_media_id: this.currentMediaId,
+      current_scene_id: this.currentSceneId,
+      active_slots: this.activeSlots,
       memory_total_mb: this.toMegabytes(stats.memoryTotal),
       memory_used_mb: this.toMegabytes(stats.memoryUsage),
       memory_free_mb: this.toMegabytes(stats.memoryFree),
@@ -266,7 +270,7 @@ export class HeartbeatService {
       // Queue for later if offline
       const requestQueue = getRequestQueue()
       try {
-        await requestQueue.enqueue({
+        const queued = await requestQueue.enqueue({
           method: 'POST',
           url: '/api/v1/device/heartbeat',
           data:
@@ -281,6 +285,10 @@ export class HeartbeatService {
                 },
           maxRetries: 3,
         })
+        if (!queued) {
+          metrics.safeRecordHeartbeat('failed', (Date.now() - startedAt) / 1000)
+          throw new Error('Heartbeat retry queue rejected the payload')
+        }
         metrics.safeRecordHeartbeat('queued', (Date.now() - startedAt) / 1000)
       } catch (queueError) {
         metrics.safeRecordHeartbeat('failed', (Date.now() - startedAt) / 1000)
@@ -305,12 +313,25 @@ export class HeartbeatService {
     logger.debug({ mediaId }, 'Current media updated')
   }
 
+  setActivePlayback(sceneId: string | undefined, activeSlots: ActiveSlotPlayback[]): void {
+    this.currentSceneId = sceneId
+    this.activeSlots = activeSlots
+    if (activeSlots.length > 0) {
+      this.currentMediaId = activeSlots[0]?.media_id ?? undefined
+    } else if (sceneId) {
+      this.currentMediaId = undefined
+    }
+    logger.debug({ sceneId, activeSlotCount: activeSlots.length }, 'Active scene playback updated')
+  }
+
   /**
    * Clear current schedule and media
    */
   clearCurrent(): void {
     this.currentScheduleId = undefined
     this.currentMediaId = undefined
+    this.currentSceneId = undefined
+    this.activeSlots = []
     logger.debug('Current schedule and media cleared')
   }
 

@@ -48,6 +48,7 @@ export class SnapshotManager extends EventEmitter {
   private isPolling = false
   private snapshotPath: string
   private lastError?: string
+  private serverClockOffsetMs = 0
 
   constructor() {
     super()
@@ -68,20 +69,16 @@ export class SnapshotManager extends EventEmitter {
     this.isPolling = true
     this.refreshSnapshot().catch((error) => {
       logger.error({ error }, 'Initial snapshot fetch failed')
+    }).finally(() => {
+      this.scheduleNextPoll(intervalMs)
     })
-
-    this.pollInterval = setInterval(() => {
-      this.refreshSnapshot().catch((error) => {
-        logger.error({ error }, 'Snapshot poll failed')
-      })
-    }, intervalMs)
 
     logger.info({ intervalMs }, 'Snapshot manager started')
   }
 
   stop(): void {
     if (this.pollInterval) {
-      clearInterval(this.pollInterval)
+      clearTimeout(this.pollInterval)
       this.pollInterval = undefined
     }
     if (this.evaluationTimer) {
@@ -163,6 +160,7 @@ export class SnapshotManager extends EventEmitter {
       }
 
       const normalized = parseSnapshotResponse(response.data)
+      this.updateServerClock(normalized.serverTime)
       await this.persistSnapshot(normalized)
 
       await this.cacheSnapshotMedia(normalized)
@@ -185,8 +183,8 @@ export class SnapshotManager extends EventEmitter {
       const status = error?.response?.status
 
       if (status === 404) {
-        logger.warn('Snapshot not found (404), using offline fallback if available')
-        return this.applyOfflineFallback('No published snapshot available')
+        logger.warn('Snapshot not found (404), clearing scheduled content instead of reusing cached snapshot')
+        return this.applyIntentionalNoContent(undefined, 'empty', 'No published snapshot available')
       }
 
       if (error instanceof CacheError && error.details?.['reason'] === 'URL_EXPIRED' && retryOnExpired) {
@@ -225,16 +223,25 @@ export class SnapshotManager extends EventEmitter {
 
   private async cacheSnapshotMedia(snapshot: NormalizedSnapshot): Promise<void> {
     const cacheManager = getCacheManager()
-    const allItems: TimelineItem[] = []
+    const prioritizedItems: TimelineItem[] = []
+    const activeWindow = snapshot.scheduleWindows.length > 0
+      ? evaluateScheduleWindows(snapshot.scheduleWindows, this.getServerNowMs()).activeWindow
+      : undefined
 
-    allItems.push(...snapshot.items)
+    if (activeWindow) {
+      prioritizedItems.push(...activeWindow.items)
+    }
+    if (snapshot.emergencyItem) prioritizedItems.push(snapshot.emergencyItem)
+    if (snapshot.defaultItem) prioritizedItems.push(snapshot.defaultItem)
+    prioritizedItems.push(...snapshot.items)
     snapshot.scheduleWindows.forEach((window) => {
-      allItems.push(...window.items)
+      if (window.id !== activeWindow?.id) {
+        prioritizedItems.push(...window.items)
+      }
     })
-    if (snapshot.emergencyItem) allItems.push(snapshot.emergencyItem)
-    if (snapshot.defaultItem) allItems.push(snapshot.defaultItem)
 
-    for (const item of allItems) {
+    const prefetchItems: Array<{ mediaId: string; url: string; sha256?: string }> = []
+    for (const item of prioritizedItems) {
       if (!item.mediaId) {
         continue
       }
@@ -248,14 +255,20 @@ export class SnapshotManager extends EventEmitter {
         continue
       }
 
-      try {
-        await cacheManager.add(item.mediaId, cacheUrl, item.sha256)
-      } catch (error) {
-        if (error instanceof CacheError && error.details?.['reason'] === 'URL_EXPIRED') {
-          throw error
-        }
-        logger.warn({ mediaId: item.mediaId, error }, 'Failed to cache media item')
+      prefetchItems.push({
+        mediaId: item.mediaId,
+        url: cacheUrl,
+        sha256: item.sha256,
+      })
+    }
+
+    try {
+      await cacheManager.prefetch(prefetchItems)
+    } catch (error) {
+      if (error instanceof CacheError && error.details?.['reason'] === 'URL_EXPIRED') {
+        throw error
       }
+      logger.warn({ error }, 'Failed to prefetch snapshot media')
     }
   }
 
@@ -264,7 +277,18 @@ export class SnapshotManager extends EventEmitter {
     let items: TimelineItem[] = []
     let nextTransitionAt: number | undefined
 
-    if (snapshot.emergencyItem) {
+    if (snapshot.contentState === 'empty' && !snapshot.emergencyItem) {
+      mode = 'empty'
+      items = []
+    } else if (snapshot.contentState === 'default' && !snapshot.emergencyItem) {
+      if (snapshot.defaultItem) {
+        mode = 'default'
+        items = await this.attachLocalMedia([snapshot.defaultItem])
+      } else {
+        mode = 'empty'
+        items = []
+      }
+    } else if (snapshot.emergencyItem) {
       mode = 'emergency'
       items = await this.attachLocalMedia([snapshot.emergencyItem])
       nextTransitionAt =
@@ -272,13 +296,13 @@ export class SnapshotManager extends EventEmitter {
           ? Date.parse(snapshot.emergencyExpiresAt)
           : undefined
     } else if (snapshot.scheduleWindows.length > 0) {
-      const evaluation = evaluateScheduleWindows(snapshot.scheduleWindows)
+      const evaluation = evaluateScheduleWindows(snapshot.scheduleWindows, this.getServerNowMs())
       nextTransitionAt = evaluation.nextTransitionAt
 
       if (evaluation.activeWindow && evaluation.items.length > 0) {
         mode = 'normal'
         const hydratedWindowItems = await this.attachLocalMedia(evaluation.items)
-        items = this.buildLayoutSceneItems(evaluation.activeWindow, hydratedWindowItems)
+        items = this.buildLayoutSceneItems(evaluation.activeWindow, hydratedWindowItems, snapshot.scheduleId)
       } else if (snapshot.defaultItem) {
         mode = 'default'
         items = await this.attachLocalMedia([snapshot.defaultItem])
@@ -318,7 +342,7 @@ export class SnapshotManager extends EventEmitter {
       return
     }
 
-    const delayMs = Math.max(250, nextTransitionAt - Date.now())
+    const delayMs = Math.max(250, nextTransitionAt - this.getServerNowMs())
     this.evaluationTimer = setTimeout(() => {
       void this.rebuildFromCachedSnapshot(snapshot.snapshotId)
     }, delayMs)
@@ -401,7 +425,11 @@ export class SnapshotManager extends EventEmitter {
     }
   }
 
-  private buildLayoutSceneItems(window: NormalizedScheduleWindow, items: TimelineItem[]): TimelineItem[] {
+  private buildLayoutSceneItems(
+    window: NormalizedScheduleWindow,
+    items: TimelineItem[],
+    scheduleId?: string
+  ): TimelineItem[] {
     const slots = this.extractLayoutSlots(window)
     if (slots.length === 0) {
       return items
@@ -448,10 +476,9 @@ export class SnapshotManager extends EventEmitter {
       return items
     }
 
-    const nowMs = Date.now()
+    const nowMs = this.getServerNowMs()
     const endAtMs = window.endAt ? Date.parse(window.endAt) : Number.NaN
     const remainingMs = Number.isFinite(endAtMs) ? Math.max(1000, endAtMs - nowMs) : 10000
-    const primaryMediaId = sceneSlots[0]?.items[0]?.mediaId
 
     const scene: LayoutScene = {
       layoutId: window.layout?.id,
@@ -459,6 +486,7 @@ export class SnapshotManager extends EventEmitter {
       aspectRatio: window.layout?.aspect_ratio,
       startsAt: window.startAt,
       endsAt: window.endAt,
+      serverTimeOffsetMs: this.serverClockOffsetMs,
       slots: sceneSlots,
     }
 
@@ -466,7 +494,6 @@ export class SnapshotManager extends EventEmitter {
       {
         id: `scene:${window.id}`,
         type: 'scene',
-        mediaId: primaryMediaId,
         displayMs: remainingMs,
         fit: 'contain',
         muted: true,
@@ -474,6 +501,7 @@ export class SnapshotManager extends EventEmitter {
         transitionDurationMs: 0,
         meta: {
           source: 'schedule',
+          scheduleId,
           presentationId: window.presentationId,
           presentationName: window.presentationName,
           layout: window.layout,
@@ -499,7 +527,7 @@ export class SnapshotManager extends EventEmitter {
     if (this.currentSnapshot) {
       const playlist = await this.buildPlaylist(this.currentSnapshot, 'offline')
       const effectivePlaylist =
-        playlist.mode === 'empty'
+        playlist.mode === 'empty' && this.currentSnapshot.contentState === 'scheduled'
           ? {
               ...playlist,
               mode: 'offline' as PlaybackMode,
@@ -518,6 +546,73 @@ export class SnapshotManager extends EventEmitter {
     this.currentPlaylist = playlist
     this.emit('playlist-updated', playlist)
     return playlist
+  }
+
+  private async applyIntentionalNoContent(
+    snapshot: NormalizedSnapshot | undefined,
+    contentState: 'default' | 'empty',
+    reason?: string
+  ): Promise<PlaybackPlaylist> {
+    this.lastError = reason
+    if (this.evaluationTimer) {
+      clearTimeout(this.evaluationTimer)
+      this.evaluationTimer = undefined
+    }
+
+    const nextSnapshot =
+      snapshot ??
+      ({
+        contentState,
+        items: [],
+        scheduleWindows: [],
+        mediaUrlMap: {},
+        fetchedAt: new Date().toISOString(),
+      } as NormalizedSnapshot)
+
+    this.currentSnapshot = nextSnapshot
+    const playlist = await this.buildPlaylist(nextSnapshot, 'normal')
+    this.currentPlaylist = playlist
+    this.emit('playlist-updated', playlist)
+    return playlist
+  }
+
+  private updateServerClock(serverTime?: string): void {
+    if (!serverTime) {
+      return
+    }
+
+    const serverMs = Date.parse(serverTime)
+    if (!Number.isFinite(serverMs)) {
+      return
+    }
+
+    this.serverClockOffsetMs = serverMs - Date.now()
+  }
+
+  private getServerNowMs(): number {
+    return Date.now() + this.serverClockOffsetMs
+  }
+
+  private scheduleNextPoll(intervalMs: number): void {
+    if (!this.isPolling) {
+      return
+    }
+
+    if (this.pollInterval) {
+      clearTimeout(this.pollInterval)
+    }
+
+    const jitter = intervalMs * 0.15 * (Math.random() * 2 - 1)
+    const delayMs = Math.max(1000, Math.round(intervalMs + jitter))
+    this.pollInterval = setTimeout(() => {
+      this.refreshSnapshot()
+        .catch((error) => {
+          logger.error({ error }, 'Snapshot poll failed')
+        })
+        .finally(() => {
+          this.scheduleNextPoll(intervalMs)
+        })
+    }, delayMs)
   }
 }
 

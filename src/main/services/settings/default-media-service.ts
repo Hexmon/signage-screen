@@ -63,20 +63,16 @@ export class DefaultMediaService extends EventEmitter {
 
     this.refreshNow('startup').catch((error) => {
       logger.warn({ error }, 'Initial default media fetch failed')
+    }).finally(() => {
+      this.scheduleNextPoll(intervalMs)
     })
-
-    this.pollInterval = setInterval(() => {
-      this.refreshNow('poll').catch((error) => {
-        logger.warn({ error }, 'Default media poll failed')
-      })
-    }, intervalMs)
 
     logger.info({ intervalMs }, 'Default media polling started')
   }
 
   stop(): void {
     if (this.pollInterval) {
-      clearInterval(this.pollInterval)
+      clearTimeout(this.pollInterval)
       this.pollInterval = undefined
     }
     this.isRunning = false
@@ -160,6 +156,28 @@ export class DefaultMediaService extends EventEmitter {
       logger.warn({ error, reason }, 'Failed to refresh default media')
       return this.current
     }
+  }
+
+  private scheduleNextPoll(intervalMs: number): void {
+    if (!this.isRunning) {
+      return
+    }
+
+    if (this.pollInterval) {
+      clearTimeout(this.pollInterval)
+    }
+
+    const jitter = intervalMs * 0.15 * (Math.random() * 2 - 1)
+    const delayMs = Math.max(1000, Math.round(intervalMs + jitter))
+    this.pollInterval = setTimeout(() => {
+      this.refreshNow('poll')
+        .catch((error) => {
+          logger.warn({ error }, 'Default media poll failed')
+        })
+        .finally(() => {
+          this.scheduleNextPoll(intervalMs)
+        })
+    }, delayMs)
   }
 
   private hasChanged(previous: DefaultMediaResponse, next: DefaultMediaResponse): boolean {

@@ -12,6 +12,8 @@ export interface NormalizedSnapshot {
   snapshotId?: string
   scheduleId?: string
   scheduleTimezone?: string | null
+  contentState: 'scheduled' | 'default' | 'empty'
+  serverTime?: string
   items: TimelineItem[]
   scheduleWindows: NormalizedScheduleWindow[]
   emergencyItem?: TimelineItem
@@ -158,7 +160,13 @@ function extractMediaUrlMap(payload: DeviceSnapshot): SnapshotMediaUrlMap {
 
 export function parseSnapshotResponse(raw: unknown): NormalizedSnapshot {
   const wrapper = raw as any
-  const payload = wrapper?.snapshot || wrapper?.data || raw
+  const payloadCandidate = wrapper?.snapshot || wrapper?.data || raw
+  const payload =
+    payloadCandidate && typeof payloadCandidate === 'object'
+      ? payloadCandidate
+      : wrapper && typeof wrapper === 'object'
+        ? {}
+        : payloadCandidate
 
   if (!payload || typeof payload !== 'object') {
     throw new Error('Snapshot payload is not an object')
@@ -216,6 +224,15 @@ export function parseSnapshotResponse(raw: unknown): NormalizedSnapshot {
     snapshotId: snapshot.id || snapshot.snapshot_id,
     scheduleId: schedule?.id,
     scheduleTimezone: schedule?.timezone ?? null,
+    contentState:
+      wrapper?.content_state === 'scheduled' || wrapper?.content_state === 'default' || wrapper?.content_state === 'empty'
+        ? wrapper.content_state
+        : snapshot.schedule || scheduleItems.length > 0 || items.length > 0
+          ? 'scheduled'
+          : defaultItem
+            ? 'default'
+            : 'empty',
+    serverTime: typeof wrapper?.server_time === 'string' ? wrapper.server_time : undefined,
     items,
     scheduleWindows,
     emergencyItem,
@@ -230,6 +247,7 @@ export function parseSnapshotResponse(raw: unknown): NormalizedSnapshot {
     {
       snapshotId: normalized.snapshotId,
       scheduleId: normalized.scheduleId,
+      contentState: normalized.contentState,
       itemCount: normalized.items.length,
       scheduleWindowCount: normalized.scheduleWindows.length,
       hasEmergency: Boolean(normalized.emergencyItem),

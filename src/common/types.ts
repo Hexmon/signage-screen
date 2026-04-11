@@ -112,7 +112,18 @@ export interface LayoutScene {
   aspectRatio?: string
   startsAt?: string
   endsAt?: string
+  serverTimeOffsetMs?: number
   slots: LayoutSceneSlot[]
+}
+
+export interface ActiveSlotPlayback {
+  scene_id: string
+  slot_id: string
+  item_id: string
+  media_id: string | null
+  schedule_id?: string | null
+  playback_instance_id: string
+  started_at: string
 }
 
 // CMS default media types
@@ -326,6 +337,8 @@ export interface SnapshotMediaEntry {
 export interface DeviceSnapshot {
   id?: string
   snapshot_id?: string
+  content_state?: 'scheduled' | 'default' | 'empty'
+  server_time?: string
   schedule?: SnapshotSchedule
   items?: SnapshotScheduleItem[]
   media_urls?: SnapshotMediaUrlMap
@@ -464,6 +477,8 @@ export interface HeartbeatPayload {
   temperature?: number
   current_schedule_id?: string
   current_media_id?: string
+  current_scene_id?: string
+  active_slots?: ActiveSlotPlayback[]
   memory_total_mb?: number
   memory_used_mb?: number
   memory_free_mb?: number
@@ -588,6 +603,10 @@ export interface ProofOfPlayEvent {
   device_id: string
   schedule_id: string
   media_id: string
+  playback_instance_id: string
+  scene_id?: string
+  slot_id?: string
+  item_id?: string
   start_time: string
   end_time: string
   duration: number
@@ -619,6 +638,7 @@ export interface DeviceCommand {
 
 export interface CommandAcknowledgment {
   commandId: string
+  deliveryToken?: string
   result: 'success' | 'error'
   message?: string
   data?: Record<string, unknown>
@@ -632,6 +652,7 @@ export interface Command {
   params?: Record<string, unknown>
   createdAt?: string
   expiresAt?: string
+  deliveryToken?: string
 }
 
 export interface CommandResult {
@@ -739,6 +760,7 @@ export type RecoveryKind = 'AUTH_INVALID' | 'DEVICE_NOT_REGISTERED' | 'PARTIAL_I
 
 export interface RecentCommandRecord {
   id: string
+  deliveryToken?: string
   firstSeenAt: string
   lastSeenAt: string
   source: 'heartbeat' | 'poll'
