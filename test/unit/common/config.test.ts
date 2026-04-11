@@ -144,6 +144,61 @@ describe('Config Manager', () => {
       expect(config.intervals.commandPollMs).to.equal(5000)
       expect(diskConfig.intervals.commandPollMs).to.equal(5000)
     })
+
+    it('should migrate the legacy strict player CSP to the media-safe default', () => {
+      const legacyConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+      legacyConfig.security = {
+        csp: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'",
+      }
+      fs.writeFileSync(configPath, JSON.stringify(legacyConfig, null, 2))
+
+      delete require.cache[require.resolve('../../../src/common/config')]
+      const { getConfigManager } = require('../../../src/common/config')
+
+      const configManager = getConfigManager()
+      const config = configManager.getConfig()
+      const diskConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+
+      expect(config.security.csp).to.include("img-src 'self' data: blob: file: http: https:")
+      expect(config.security.csp).to.include("connect-src 'self' data: blob: http: https: ws: wss:")
+      expect(diskConfig.security.csp).to.equal(config.security.csp)
+    })
+
+    it('should default observability to localhost-only exposure', () => {
+      delete require.cache[require.resolve('../../../src/common/config')]
+      const { getConfigManager } = require('../../../src/common/config')
+
+      const configManager = getConfigManager()
+      const config = configManager.getConfig()
+
+      expect(config.observability.enabled).to.equal(true)
+      expect(config.observability.metricsEnabled).to.equal(true)
+      expect(config.observability.bindAddress).to.equal('127.0.0.1')
+      expect(config.observability.port).to.equal(3300)
+      expect(config.observability.allowRemoteAccess).to.equal(false)
+    })
+
+    it('should normalize non-loopback metrics binding back to localhost unless remote access is explicitly enabled', () => {
+      const updatedConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+      updatedConfig.observability = {
+        enabled: true,
+        metricsEnabled: true,
+        bindAddress: '0.0.0.0',
+        port: 9300,
+        allowRemoteAccess: false,
+      }
+      fs.writeFileSync(configPath, JSON.stringify(updatedConfig, null, 2))
+
+      delete require.cache[require.resolve('../../../src/common/config')]
+      const { getConfigManager } = require('../../../src/common/config')
+
+      const configManager = getConfigManager()
+      const config = configManager.getConfig()
+
+      expect(config.observability.bindAddress).to.equal('127.0.0.1')
+      expect(config.observability.port).to.equal(9300)
+      expect(config.observability.allowRemoteAccess).to.equal(false)
+    })
   })
 
   describe('Configuration Validation', () => {

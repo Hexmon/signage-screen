@@ -213,6 +213,54 @@ describe('Proof-of-Play Service', () => {
 
       expect(flushStub.called).to.be.true
     })
+
+    it('should spill overflow to disk and expose replay stats', async () => {
+      const { getProofOfPlayService } = require('../../../src/main/services/pop-service')
+      const popService = getProofOfPlayService()
+      sandbox.stub(popService, 'flushEvents').resolves()
+
+      for (let i = 0; i < 140; i++) {
+        popService.recordStart('schedule-1', `media-${i}`)
+        popService.recordEnd('schedule-1', `media-${i}`, true)
+      }
+
+      await sleep(25)
+
+      const stats = popService.getReplayStats()
+      expect(stats.bufferItems).to.be.at.most(100)
+      expect(stats.compactedEvents).to.be.greaterThan(0)
+      expect(stats.spoolFiles).to.be.greaterThan(0)
+    })
+
+    it('should pace replay by draining only one bounded batch at a time', async () => {
+      const spoolFiles = [
+        path.join(spoolDir, 'pop-a.json'),
+        path.join(spoolDir, 'pop-b.json'),
+      ]
+      const makeEvent = (index: number) => ({
+        schedule_id: 'schedule-1',
+        media_id: `media-${index}`,
+        start_time: new Date(Date.now() - index * 1000).toISOString(),
+        end_time: new Date(Date.now() - index * 1000 + 1000).toISOString(),
+        duration: 1,
+        completed: true,
+      })
+
+      fs.writeFileSync(spoolFiles[0], JSON.stringify(Array.from({ length: 15 }, (_, index) => makeEvent(index))))
+      fs.writeFileSync(spoolFiles[1], JSON.stringify(Array.from({ length: 15 }, (_, index) => makeEvent(index + 15))))
+
+      const { getProofOfPlayService } = require('../../../src/main/services/pop-service')
+      const { getHttpClient } = require('../../../src/main/services/network/http-client')
+      const popService = getProofOfPlayService()
+      const httpClient = getHttpClient()
+      const postStub = sandbox.stub(httpClient, 'post').resolves({ received: 1, duplicates: 0 })
+
+      await popService.flushEvents()
+
+      const stats = popService.getReplayStats()
+      expect(postStub.callCount).to.equal(25)
+      expect(stats.spoolFiles).to.be.greaterThan(0)
+    })
   })
 
   describe('Cleanup', () => {

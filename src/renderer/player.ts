@@ -76,12 +76,7 @@ export function resolvePlayerContentSource(
     return 'none'
   }
 
-  if (
-    status.mode === 'default' ||
-    status.mode === 'offline' ||
-    status.mode === 'empty' ||
-    (status.mode === 'normal' && !status.currentMediaId)
-  ) {
+  if (status.mode === 'default' || status.mode === 'offline' || status.mode === 'empty') {
     return 'default'
   }
 
@@ -104,12 +99,9 @@ type DisposableMediaNode = {
   src?: string
 }
 
-export function shouldClearScheduledPlayback(status: PlayerStatus): boolean {
-  if (status.mode === 'default' || status.mode === 'empty' || status.mode === 'offline') {
-    return true
-  }
-
-  return status.mode === 'normal' && !status.currentMediaId
+type RenderedScene = {
+  element: HTMLElement
+  cleanup: () => void
 }
 
 function teardownDisposableNode(node: DisposableMediaNode | null | undefined): void {
@@ -186,6 +178,7 @@ export function teardownScheduledElementTree(root: DisposableMediaNode | null | 
 }
 
 class Player {
+  private static readonly FALLBACK_STATUS_GUARD_MS = 2000
   private canvas: HTMLCanvasElement | null = null
   private currentElement?: HTMLElement
   private mediaContainer: HTMLElement | null = null
@@ -198,6 +191,7 @@ class Player {
   private modeBanner: HTMLElement | null = null
   private currentCleanup?: () => void
   private playbackSession = 0
+  private ignoreFallbackStatusUntil = 0
 
   constructor() {
     this.initializeElements()
@@ -220,6 +214,7 @@ class Player {
 
     if (this.canvas) {
       this.resizeCanvas()
+      this.canvas.style.display = 'none'
 
       // Handle window resize
       window.addEventListener('resize', () => this.resizeCanvas())
@@ -236,6 +231,9 @@ class Player {
         this.refreshDefaultMedia(reason).catch((error) => {
           this.log('warn', 'Default media refresh failed', { reason, error: error.message })
         })
+      },
+      onLog: (level, message, data) => {
+        this.log(level, message, data)
       },
       debugOverlay: false,
     })
@@ -273,6 +271,7 @@ class Player {
     if (window.hexmon && window.hexmon.onMediaChange) {
       window.hexmon.onMediaChange((data: any) => {
         this.log('debug', 'Received play-media event', data)
+        this.ignoreFallbackStatusUntil = Date.now() + Player.FALLBACK_STATUS_GUARD_MS
         this.setActiveSource('schedule')
         this.playMedia(data.item).catch((error) => {
           this.log('error', 'Failed to play media', { error: error.message })
@@ -289,6 +288,7 @@ class Player {
           this.startTransition(data.current, data.next, data.durationMs)
         } else if (data.type === 'clear-active') {
           this.log('debug', 'Received clear-active event', data)
+          this.ignoreFallbackStatusUntil = 0
           this.clearScheduledPlayback(data.reason || 'clear-active')
           this.setActiveSource('default')
         } else if (data.type === 'show-fallback') {
@@ -340,11 +340,19 @@ class Player {
   }
 
   private updateContentSource(status: PlayerStatus): void {
-    if (shouldClearScheduledPlayback(status)) {
-      this.clearScheduledPlayback(`status:${status.mode}`)
+    const nextSource = resolvePlayerContentSource(status)
+    if (nextSource === 'schedule') {
+      this.setActiveSource('schedule')
+      return
     }
 
-    this.setActiveSource(resolvePlayerContentSource(status))
+    if (Date.now() < this.ignoreFallbackStatusUntil) {
+      this.log('debug', 'Ignoring stale fallback status during schedule activation', {
+        mode: status.mode,
+        state: status.state,
+      })
+      return
+    }
   }
 
   private setActiveSource(source: 'schedule' | 'default' | 'none'): void {
@@ -375,12 +383,13 @@ class Player {
           throw new Error('Scene definition missing from scheduled layout item')
         }
 
-        const element = this.renderScene(item, scene)
+        const renderedScene = this.renderScene(item, scene)
+        const element = renderedScene.element
         if (sessionId !== this.playbackSession) {
           this.disposeScheduledElement(element)
           return
         }
-        this.showElement(element)
+        this.showElement(element, renderedScene.cleanup)
         this.currentElement = element
         return
       }
@@ -567,7 +576,7 @@ class Player {
     })
   }
 
-  private renderScene(sceneItem: TimelineItem, scene: LayoutScene): HTMLElement {
+  private renderScene(sceneItem: TimelineItem, scene: LayoutScene): RenderedScene {
     const container = document.createElement('div')
     container.style.position = 'absolute'
     container.style.top = '0'
@@ -603,12 +612,15 @@ class Player {
       cleanupCallbacks.push(this.mountSceneSlot(slotContainer, slot, scene.startsAt))
     })
 
-    this.currentCleanup = () => {
+    const cleanup = () => {
       cleanupCallbacks.forEach((cleanup) => cleanup())
       cleanupCallbacks.length = 0
     }
 
-    return container
+    return {
+      element: container,
+      cleanup,
+    }
   }
 
   /**
@@ -641,6 +653,10 @@ class Player {
       return item.localUrl
     }
 
+    if (item.remoteUrl) {
+      return item.remoteUrl
+    }
+
     if (item.localPath) {
       return item.localPath
     }
@@ -668,7 +684,7 @@ class Player {
   /**
    * Show element with fade in
    */
-  private showElement(element: HTMLElement): void {
+  private showElement(element: HTMLElement, nextCleanup?: () => void): void {
     if (!this.mediaContainer) return
 
     this.runCurrentCleanup()
@@ -685,13 +701,10 @@ class Player {
     }
 
     // Add and show new element
-    element.style.opacity = '0'
+    element.style.zIndex = '1'
     this.mediaContainer.appendChild(element)
-
-    requestAnimationFrame(() => {
-      element.style.transition = 'opacity 500ms ease-in-out'
-      element.style.opacity = '1'
-    })
+    element.style.opacity = '1'
+    this.currentCleanup = nextCleanup
   }
 
   /**
@@ -922,13 +935,8 @@ class Player {
           return
         }
         this.applyFitMode(nextElement, item.fit)
-        nextElement.style.opacity = '0'
-        nextElement.style.transition = 'opacity 300ms ease-in-out'
+        nextElement.style.opacity = '1'
         container.appendChild(nextElement)
-
-        requestAnimationFrame(() => {
-          nextElement.style.opacity = '1'
-        })
 
         if (activeElement && activeElement.parentElement === container) {
           const previous = activeElement

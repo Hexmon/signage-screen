@@ -8,6 +8,8 @@ type EmbeddedWebviewElement = HTMLElement & {
   executeJavaScript?: (code: string, userGesture?: boolean) => Promise<unknown>
 }
 
+const WEBPAGE_PARTITION = 'persist:hexmon-webpage-playback'
+
 export type ManagedWebpageElement = HTMLElement & {
   __hexmonCleanup?: () => void
 }
@@ -30,6 +32,19 @@ type WebpageProbeResult = {
   hasVisibleContent: boolean
   width: number
   height: number
+  textLength: number
+  mediaCount: number
+  visibleElementCount: number
+}
+
+export function shouldRevealLiveWebpage(
+  probe: Pick<WebpageProbeResult, 'width' | 'height' | 'textLength' | 'mediaCount' | 'visibleElementCount'>,
+): boolean {
+  return (
+    probe.width > 0 &&
+    probe.height > 0 &&
+    (probe.textLength > 24 || probe.mediaCount > 0 || probe.visibleElementCount > 1)
+  )
 }
 
 const WEBPAGE_READY_PROBE = `
@@ -45,6 +60,9 @@ const WEBPAGE_READY_PROBE = `
           hasVisibleContent: false,
           width: 0,
           height: 0,
+          textLength: 0,
+          mediaCount: 0,
+          visibleElementCount: 0,
         };
       }
 
@@ -52,15 +70,56 @@ const WEBPAGE_READY_PROBE = `
       const maxHeight = Math.max(root.clientHeight, root.scrollHeight, body.clientHeight, body.scrollHeight);
       const textLength = (body.innerText || '').trim().length;
       const mediaCount = body.querySelectorAll('img, video, canvas, svg, iframe, embed, object').length;
-      const hasVisibleContent = textLength > 0 || mediaCount > 0 || body.children.length > 0;
+      const visibleElements = Array.from(body.querySelectorAll('*')).filter((node) => {
+        if (!(node instanceof HTMLElement) && !(node instanceof SVGElement)) {
+          return false;
+        }
+
+        const tagName = node.tagName.toLowerCase();
+        if (['script', 'style', 'link', 'meta', 'noscript'].includes(tagName)) {
+          return false;
+        }
+
+        const rect = node.getBoundingClientRect();
+        if (rect.width <= 4 || rect.height <= 4) {
+          return false;
+        }
+
+        const style = window.getComputedStyle(node);
+        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+          return false;
+        }
+
+        const directTextLength = (node.textContent || '').trim().length;
+        const hasGraphicSurface = ['img', 'video', 'canvas', 'svg', 'iframe', 'embed', 'object'].includes(tagName);
+        const hasChildren = node.children.length > 0;
+        return directTextLength > 0 || hasGraphicSurface || hasChildren;
+      });
+
+      const visibleElementCount = visibleElements.length;
+      const rootMount = body.querySelector('#root, #app');
+      const rootHydrated = Boolean(rootMount && rootMount.children.length > 0);
+      const hasVisibleContent =
+        textLength > 24 ||
+        mediaCount > 0 ||
+        visibleElementCount > 1 ||
+        rootHydrated;
+
+      const ready =
+        maxWidth > 0 &&
+        maxHeight > 0 &&
+        (textLength > 24 || mediaCount > 0 || visibleElementCount > 1);
 
       return {
-        ready: maxWidth > 0 && maxHeight > 0 && hasVisibleContent,
+        ready,
         reason: maxWidth <= 0 || maxHeight <= 0 ? 'zero-size' : hasVisibleContent ? 'ok' : 'empty-dom',
         hasBody: true,
         hasVisibleContent,
         width: maxWidth,
         height: maxHeight,
+        textLength,
+        mediaCount,
+        visibleElementCount,
       };
     } catch (error) {
       return {
@@ -70,6 +129,9 @@ const WEBPAGE_READY_PROBE = `
         hasVisibleContent: false,
         width: 0,
         height: 0,
+        textLength: 0,
+        mediaCount: 0,
+        visibleElementCount: 0,
       };
     }
   })()
@@ -171,6 +233,8 @@ export function createWebpagePlaybackElement(options: WebpagePlaybackOptions): M
   webview.style.zIndex = '1'
   webview.style.opacity = '0'
   webview.style.transition = 'opacity 180ms ease-in-out'
+  webview.setAttribute('partition', WEBPAGE_PARTITION)
+  webview.setAttribute('webpreferences', 'contextIsolation=yes, sandbox=yes')
   webview.src = options.liveUrl
   webview.setAttribute('allowpopups', 'false')
   container.appendChild(webview)
@@ -178,6 +242,7 @@ export function createWebpagePlaybackElement(options: WebpagePlaybackOptions): M
   let disposed = false
   let revealedLive = false
   let healthProbeTimer: number | undefined
+  let healthProbeDeadlineAt = 0
 
   const clearHealthProbeTimer = () => {
     if (healthProbeTimer) {
@@ -231,13 +296,46 @@ export function createWebpagePlaybackElement(options: WebpagePlaybackOptions): M
         | undefined
 
       if (probe?.ready) {
+        log(options, 'debug', 'Webpage readiness probe passed', {
+          url: options.liveUrl,
+          width: probe.width,
+          height: probe.height,
+          textLength: probe.textLength,
+          mediaCount: probe.mediaCount,
+          visibleElementCount: probe.visibleElementCount,
+        })
         revealLive()
         return
       }
 
-      showFallback(`probe-${probe?.reason || 'unhealthy'}`)
+      log(options, 'debug', 'Webpage readiness probe pending', {
+        url: options.liveUrl,
+        reason: probe?.reason || 'unhealthy',
+        width: probe?.width ?? 0,
+        height: probe?.height ?? 0,
+        textLength: probe?.textLength ?? 0,
+        mediaCount: probe?.mediaCount ?? 0,
+        visibleElementCount: probe?.visibleElementCount ?? 0,
+      })
+      if (Date.now() >= healthProbeDeadlineAt) {
+        showFallback(`probe-${probe?.reason || 'unhealthy'}`)
+        return
+      }
+
+      clearHealthProbeTimer()
+      healthProbeTimer = window.setTimeout(() => {
+        void probeReadiness()
+      }, 350)
     } catch {
-      showFallback('probe-execution-failed')
+      if (Date.now() >= healthProbeDeadlineAt) {
+        showFallback('probe-execution-failed')
+        return
+      }
+
+      clearHealthProbeTimer()
+      healthProbeTimer = window.setTimeout(() => {
+        void probeReadiness()
+      }, 500)
     }
   }
 
@@ -285,6 +383,17 @@ export function createWebpagePlaybackElement(options: WebpagePlaybackOptions): M
     }
   }
 
+  const handleConsoleMessage = (event: Event) => {
+    const consoleEvent = event as unknown as { level?: number; message?: string; line?: number; sourceId?: string }
+    log(options, 'debug', 'Webpage console message', {
+      url: options.liveUrl,
+      level: consoleEvent.level ?? null,
+      message: consoleEvent.message ?? '',
+      line: consoleEvent.line ?? null,
+      sourceId: consoleEvent.sourceId ?? '',
+    })
+  }
+
   webview.addEventListener('dom-ready', handleDomReady)
   webview.addEventListener('did-stop-loading', handleStopLoading)
   webview.addEventListener('did-fail-load', handleFailLoad)
@@ -292,7 +401,9 @@ export function createWebpagePlaybackElement(options: WebpagePlaybackOptions): M
   webview.addEventListener('unresponsive', handleUnresponsive as EventListener)
   webview.addEventListener('did-navigate', handleNavigate as EventListener)
   webview.addEventListener('did-navigate-in-page', handleNavigate as EventListener)
+  webview.addEventListener('console-message', handleConsoleMessage as EventListener)
 
+  healthProbeDeadlineAt = Date.now() + 12_000
   healthProbeTimer = window.setTimeout(() => {
     if (!revealedLive) {
       showFallback('health-timeout')
@@ -313,6 +424,7 @@ export function createWebpagePlaybackElement(options: WebpagePlaybackOptions): M
     webview.removeEventListener('unresponsive', handleUnresponsive as EventListener)
     webview.removeEventListener('did-navigate', handleNavigate as EventListener)
     webview.removeEventListener('did-navigate-in-page', handleNavigate as EventListener)
+    webview.removeEventListener('console-message', handleConsoleMessage as EventListener)
 
     try {
       webview.stop?.()

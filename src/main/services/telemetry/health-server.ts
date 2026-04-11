@@ -5,12 +5,22 @@
 
 import * as http from 'http'
 import { app } from 'electron'
+import { getConfigManager } from '../../../common/config'
 import { getLogger } from '../../../common/logger'
 import { HealthStatus } from '../../../common/types'
 import { getSystemStatsCollector } from './system-stats'
 import { getCacheManager } from '../cache/cache-manager'
+import { getPlayerMetrics } from './player-metrics'
 
 const logger = getLogger('health-server')
+
+function getSafeAppVersion(): string {
+  try {
+    return typeof app?.getVersion === 'function' ? app.getVersion() : 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
 
 export class HealthServer {
   private server?: http.Server
@@ -29,8 +39,17 @@ export class HealthServer {
       return
     }
 
+    const observabilityConfig = getConfigManager().getConfig().observability
+    if (!observabilityConfig.enabled) {
+      logger.info('Health server disabled by configuration')
+      return
+    }
+
+    this.host = observabilityConfig.bindAddress
+    this.port = observabilityConfig.port
+
     this.server = http.createServer((req, res) => {
-      this.handleRequest(req, res).catch((error) => {
+      this.handleRequest(req, res).catch((error: unknown) => {
         logger.error({ error }, 'Error handling request')
         res.writeHead(500, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ error: 'Internal server error' }))
@@ -68,18 +87,8 @@ export class HealthServer {
    */
   private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const url = req.url || '/'
-
-    // Set CORS headers
-    res.setHeader('Access-Control-Allow-Origin', '*')
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
-
-    // Handle OPTIONS for CORS preflight
-    if (req.method === 'OPTIONS') {
-      res.writeHead(204)
-      res.end()
-      return
-    }
+    const observabilityConfig = getConfigManager().getConfig().observability
+    res.setHeader('Cache-Control', 'no-store')
 
     // Only allow GET requests
     if (req.method !== 'GET') {
@@ -92,6 +101,11 @@ export class HealthServer {
     if (url === '/healthz' || url === '/health') {
       await this.handleHealthCheck(res)
     } else if (url === '/metrics') {
+      if (!observabilityConfig.metricsEnabled) {
+        res.writeHead(404, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Not found' }))
+        return
+      }
       await this.handleMetrics(res)
     } else {
       res.writeHead(404, { 'Content-Type': 'application/json' })
@@ -142,7 +156,7 @@ export class HealthServer {
 
     return {
       status,
-      appVersion: app.getVersion(),
+      appVersion: getSafeAppVersion(),
       uptime: systemStats.uptime,
       lastScheduleSync: this.lastScheduleSync,
       cacheUsage,
@@ -173,73 +187,7 @@ export class HealthServer {
    */
   private async getPrometheusMetrics(): Promise<string> {
     const statsCollector = getSystemStatsCollector()
-    const systemStats = await statsCollector.collect()
-
-    const cacheManager = getCacheManager()
-    const cacheStats = await cacheManager.getStats()
-
-    const metrics: string[] = []
-
-    // System metrics
-    metrics.push('# HELP hexmon_cpu_usage_percent CPU usage percentage')
-    metrics.push('# TYPE hexmon_cpu_usage_percent gauge')
-    metrics.push(`hexmon_cpu_usage_percent ${systemStats.cpuUsage}`)
-    metrics.push('')
-
-    metrics.push('# HELP hexmon_memory_usage_bytes Memory usage in bytes')
-    metrics.push('# TYPE hexmon_memory_usage_bytes gauge')
-    metrics.push(`hexmon_memory_usage_bytes ${systemStats.memoryUsage}`)
-    metrics.push('')
-
-    metrics.push('# HELP hexmon_memory_total_bytes Total memory in bytes')
-    metrics.push('# TYPE hexmon_memory_total_bytes gauge')
-    metrics.push(`hexmon_memory_total_bytes ${systemStats.memoryTotal}`)
-    metrics.push('')
-
-    metrics.push('# HELP hexmon_disk_usage_bytes Disk usage in bytes')
-    metrics.push('# TYPE hexmon_disk_usage_bytes gauge')
-    metrics.push(`hexmon_disk_usage_bytes ${systemStats.diskUsage}`)
-    metrics.push('')
-
-    metrics.push('# HELP hexmon_disk_total_bytes Total disk space in bytes')
-    metrics.push('# TYPE hexmon_disk_total_bytes gauge')
-    metrics.push(`hexmon_disk_total_bytes ${systemStats.diskTotal}`)
-    metrics.push('')
-
-    if (systemStats.temperature !== undefined) {
-      metrics.push('# HELP hexmon_temperature_celsius CPU temperature in Celsius')
-      metrics.push('# TYPE hexmon_temperature_celsius gauge')
-      metrics.push(`hexmon_temperature_celsius ${systemStats.temperature}`)
-      metrics.push('')
-    }
-
-    metrics.push('# HELP hexmon_uptime_seconds System uptime in seconds')
-    metrics.push('# TYPE hexmon_uptime_seconds counter')
-    metrics.push(`hexmon_uptime_seconds ${systemStats.uptime}`)
-    metrics.push('')
-
-    // Cache metrics
-    metrics.push('# HELP hexmon_cache_used_bytes Cache used space in bytes')
-    metrics.push('# TYPE hexmon_cache_used_bytes gauge')
-    metrics.push(`hexmon_cache_used_bytes ${cacheStats.usedBytes}`)
-    metrics.push('')
-
-    metrics.push('# HELP hexmon_cache_total_bytes Cache total space in bytes')
-    metrics.push('# TYPE hexmon_cache_total_bytes gauge')
-    metrics.push(`hexmon_cache_total_bytes ${cacheStats.totalBytes}`)
-    metrics.push('')
-
-    metrics.push('# HELP hexmon_cache_entries_total Total number of cache entries')
-    metrics.push('# TYPE hexmon_cache_entries_total gauge')
-    metrics.push(`hexmon_cache_entries_total ${cacheStats.entryCount}`)
-    metrics.push('')
-
-    metrics.push('# HELP hexmon_cache_quarantined_total Number of quarantined cache entries')
-    metrics.push('# TYPE hexmon_cache_quarantined_total gauge')
-    metrics.push(`hexmon_cache_quarantined_total ${cacheStats.quarantinedCount}`)
-    metrics.push('')
-
-    return metrics.join('\n')
+    return await getPlayerMetrics().renderPrometheusMetrics(async () => await statsCollector.collect())
   }
 
   /**
@@ -257,6 +205,7 @@ export class HealthServer {
    */
   updateLastScheduleSync(): void {
     this.lastScheduleSync = new Date().toISOString()
+    getPlayerMetrics().setLastScheduleSync(this.lastScheduleSync)
   }
 
   /**
@@ -276,4 +225,3 @@ export function getHealthServer(): HealthServer {
   }
   return healthServer
 }
-

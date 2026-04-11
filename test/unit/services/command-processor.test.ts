@@ -191,7 +191,7 @@ describe('Command Processor', () => {
 
     const commandProcessor = getCommandProcessor()
     const screenshotService = getScreenshotService()
-    const enableStub = sandbox.stub(screenshotService, 'setCaptureEnabled')
+    const applyPolicySpy = sandbox.spy(screenshotService, 'applyPolicy')
 
     const result = await commandProcessor.handleSetScreenshotInterval({
       id: 'cmd-interval',
@@ -203,7 +203,11 @@ describe('Command Processor', () => {
     })
 
     expect(result.success).to.equal(true)
-    expect(enableStub.calledOnceWith(true)).to.equal(true)
+    expect(applyPolicySpy.calledOnceWith({
+      enabled: true,
+      interval_seconds: 30,
+      interval_ms: null,
+    })).to.equal(true)
     expect(getConfigManager().getConfig().intervals.screenshotMs).to.equal(30000)
   })
 
@@ -214,7 +218,7 @@ describe('Command Processor', () => {
 
     const commandProcessor = getCommandProcessor()
     const screenshotService = getScreenshotService()
-    const enableStub = sandbox.stub(screenshotService, 'setCaptureEnabled')
+    const applyPolicySpy = sandbox.spy(screenshotService, 'applyPolicy')
 
     const originalInterval = getConfigManager().getConfig().intervals.screenshotMs
     const result = await commandProcessor.handleSetScreenshotInterval({
@@ -227,7 +231,151 @@ describe('Command Processor', () => {
 
     expect(result.success).to.equal(true)
     expect(result.message).to.contain('disabled')
-    expect(enableStub.calledOnceWith(false)).to.equal(true)
+    expect(applyPolicySpy.calledOnceWith({
+      enabled: false,
+      interval_seconds: null,
+      interval_ms: null,
+    })).to.equal(true)
     expect(getConfigManager().getConfig().intervals.screenshotMs).to.equal(originalInterval)
+  })
+
+  it('should keep /commands polling active while heartbeat is still healthy', async () => {
+    const clock = sandbox.useFakeTimers({
+      now: new Date('2026-04-07T10:00:00.000Z'),
+      shouldAdvanceTime: false,
+    })
+    sandbox.stub(Math, 'random').returns(0.5)
+    const { getCommandProcessor } = require('../../../src/main/services/command-processor')
+    const { getConfigManager } = require('../../../src/common/config')
+    const { getDeviceStateStore } = require('../../../src/main/services/device-state-store')
+
+    await getDeviceStateStore().update({
+      lastHeartbeatAt: new Date('2026-04-07T09:59:59.000Z').toISOString(),
+    })
+
+    const commandProcessor = getCommandProcessor()
+    const pollStub = sandbox.stub(commandProcessor as any, 'pollCommands').resolves()
+    const pollDelayMs = getConfigManager().getConfig().intervals.commandPollMs
+
+    commandProcessor.start()
+    await clock.tickAsync(0)
+    expect(pollStub.callCount).to.equal(1)
+
+    await clock.tickAsync(pollDelayMs - 1)
+    expect(pollStub.callCount).to.equal(1)
+
+    await clock.tickAsync(1)
+    expect(pollStub.callCount).to.equal(2)
+
+    commandProcessor.stop()
+  })
+
+  it('should keep lightweight /commands polling active for passive playback while heartbeat is healthy', async () => {
+    const clock = sandbox.useFakeTimers({
+      now: new Date('2026-04-07T10:00:00.000Z'),
+      shouldAdvanceTime: false,
+    })
+    sandbox.stub(Math, 'random').returns(0.5)
+    const { getCommandProcessor } = require('../../../src/main/services/command-processor')
+    const { getConfigManager } = require('../../../src/common/config')
+    const { getDeviceStateStore } = require('../../../src/main/services/device-state-store')
+    const { getSnapshotManager } = require('../../../src/main/services/snapshot-manager')
+
+    await getDeviceStateStore().update({
+      lastHeartbeatAt: new Date('2026-04-07T09:59:59.000Z').toISOString(),
+    })
+
+    const commandProcessor = getCommandProcessor()
+    const snapshotManager = getSnapshotManager()
+    sandbox.stub(snapshotManager, 'getCurrentPlaylist').returns({
+      mode: 'empty',
+      items: [],
+      scheduleId: undefined,
+    })
+    const pollStub = sandbox.stub(commandProcessor as any, 'pollCommands').resolves()
+    const passivePollDelayMs = getConfigManager().getConfig().intervals.commandPollMs
+
+    commandProcessor.start()
+    await clock.tickAsync(0)
+    expect(pollStub.callCount).to.equal(1)
+
+    await clock.tickAsync(passivePollDelayMs - 1)
+    expect(pollStub.callCount).to.equal(1)
+
+    await clock.tickAsync(1)
+    expect(pollStub.callCount).to.equal(2)
+
+    commandProcessor.stop()
+  })
+
+  it('should keep /commands polling active during scheduled playback while heartbeat is healthy', async () => {
+    const clock = sandbox.useFakeTimers({
+      now: new Date('2026-04-07T10:00:00.000Z'),
+      shouldAdvanceTime: false,
+    })
+    sandbox.stub(Math, 'random').returns(0.5)
+    const { getCommandProcessor } = require('../../../src/main/services/command-processor')
+    const { getConfigManager } = require('../../../src/common/config')
+    const { getDeviceStateStore } = require('../../../src/main/services/device-state-store')
+
+    await getDeviceStateStore().update({
+      lastHeartbeatAt: new Date('2026-04-07T09:59:59.000Z').toISOString(),
+    })
+
+    const commandProcessor = getCommandProcessor()
+    const pollStub = sandbox.stub(commandProcessor as any, 'pollCommands').resolves()
+    const pollDelayMs = getConfigManager().getConfig().intervals.commandPollMs
+
+    commandProcessor.start()
+    await clock.tickAsync(0)
+    expect(pollStub.callCount).to.equal(1)
+
+    await clock.tickAsync(pollDelayMs - 1)
+    expect(pollStub.callCount).to.equal(1)
+
+    await clock.tickAsync(1)
+    expect(pollStub.callCount).to.equal(2)
+
+    commandProcessor.stop()
+  })
+
+  it('should back off fallback polling after poll failures', async () => {
+    const clock = sandbox.useFakeTimers({
+      now: new Date('2026-04-07T10:00:00.000Z'),
+      shouldAdvanceTime: false,
+    })
+    sandbox.stub(Math, 'random').returns(0.5)
+    const { getCommandProcessor } = require('../../../src/main/services/command-processor')
+    const { getDeviceStateStore } = require('../../../src/main/services/device-state-store')
+    const { getHttpClient } = require('../../../src/main/services/network/http-client')
+
+    await getDeviceStateStore().update({
+      lastHeartbeatAt: new Date('2026-04-07T09:58:00.000Z').toISOString(),
+    })
+
+    const commandProcessor = getCommandProcessor()
+    const httpClient = getHttpClient()
+    const getStub = sandbox.stub(httpClient, 'get')
+    getStub.onFirstCall().rejects(new Error('poll failed'))
+    getStub.onSecondCall().rejects(new Error('poll failed again'))
+    getStub.onThirdCall().resolves({ commands: [] })
+
+    commandProcessor.start()
+    await clock.tickAsync(0)
+    expect(getStub.callCount).to.equal(1)
+
+    await clock.tickAsync(4999)
+    expect(getStub.callCount).to.equal(1)
+
+    await clock.tickAsync(1)
+    expect(getStub.callCount).to.equal(2)
+
+    await clock.tickAsync(9999)
+    expect(getStub.callCount).to.equal(2)
+
+    await clock.tickAsync(1)
+    expect(getStub.callCount).to.equal(3)
+
+    commandProcessor.stop()
   })
 })

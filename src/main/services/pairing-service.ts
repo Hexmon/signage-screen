@@ -10,6 +10,7 @@ import {
   PairingResponse,
   PairingStatusResponse,
   PlayerState,
+  ScreenshotPolicyResponse,
   isDeviceApiError,
 } from '../../common/types'
 import { getCertificateManager } from './cert-manager'
@@ -144,6 +145,31 @@ export class PairingService {
       `/api/v1/device-pairing/status?device_id=${encodeURIComponent(deviceId)}`,
       { mtls: false }
     )
+  }
+
+  async fetchScreenshotPolicy(deviceIdOverride?: string): Promise<ScreenshotPolicyResponse | null> {
+    const deviceId = deviceIdOverride || this.getDeviceId()
+    if (!deviceId) {
+      return null
+    }
+
+    try {
+      const httpClient = getHttpClient()
+      return await httpClient.get<ScreenshotPolicyResponse>(`/api/v1/device/${encodeURIComponent(deviceId)}/screenshot-policy`, {
+        retry: false,
+      })
+    } catch (error) {
+      if (isDeviceApiError(error)) {
+        logger.warn(
+          { deviceId, code: error.code, message: error.message },
+          'Screenshot policy unavailable during bootstrap; keeping capture disabled'
+        )
+        return null
+      }
+
+      logger.warn({ deviceId, error }, 'Unexpected screenshot policy fetch failure; keeping capture disabled')
+      return null
+    }
   }
 
   async submitPairing(pairingCode: string): Promise<PairingResponse> {

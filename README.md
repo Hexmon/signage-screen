@@ -279,6 +279,8 @@ Autostart is managed at the user-session level:
 curl http://127.0.0.1:3300/healthz
 ```
 
+The local health and metrics server stays bound to `127.0.0.1` by default. Remote scraping is disabled unless `observability.allowRemoteAccess` is explicitly turned on in the player config.
+
 Response:
 ```json
 {
@@ -315,6 +317,20 @@ Press `Ctrl+Shift+D` to toggle the diagnostics overlay showing:
 - Cache usage percentage
 - Command queue status
 - Current screen mode
+
+### Metrics Exposure
+
+`/metrics` now exposes Prometheus-native `signhex_player_*` families for heartbeat outcomes, queue backlog, cache usage, player state, screenshot uploads, command processing, and host resource snapshots.
+
+Safe defaults:
+
+- `observability.enabled=true`
+- `observability.metricsEnabled=true`
+- `observability.bindAddress=127.0.0.1`
+- `observability.port=3300`
+- `observability.allowRemoteAccess=false`
+
+Use direct player scraping only on approved management networks. If direct scrape is not required, keep the default localhost binding and rely on backend summaries in the CMS.
 
 ## API Contracts
 

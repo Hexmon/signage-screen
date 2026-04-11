@@ -43,11 +43,18 @@
     "scheduleEnabled": false
   },
   "security": {
-    "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'",
+    "csp": "default-src 'self' data: blob: file: http: https:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: file: http: https:; media-src 'self' data: blob: file: http: https:; connect-src 'self' data: blob: http: https: ws: wss:; frame-src 'self' data: blob: file: http: https:; worker-src 'self' blob:; font-src 'self' data: http: https:; object-src 'none'",
     "allowedDomains": [],
     "disableEval": true,
     "contextIsolation": true,
     "nodeIntegration": false,
     "sandbox": true
+  },
+  "observability": {
+    "enabled": true,
+    "metricsEnabled": true,
+    "bindAddress": "127.0.0.1",
+    "port": 3300,
+    "allowRemoteAccess": false
   }
 }

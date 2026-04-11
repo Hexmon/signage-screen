@@ -111,6 +111,10 @@ describe('Player Flow', () => {
     const pairingService = getPairingService()
     sandbox.stub(pairingService, 'getStoredIdentityHealth').returns({ health: 'complete', issues: [] })
     sandbox.stub(pairingService, 'hasTrustworthyDeviceId').returns(true)
+    sandbox.stub(pairingService, 'fetchScreenshotPolicy').resolves({
+      enabled: false,
+      interval_seconds: null,
+    })
 
     const stubs = createCompleteBootstrapStubs()
     const playerFlow = getPlayerFlow()
@@ -494,10 +498,13 @@ describe('Player Flow', () => {
     const pairingService = getPairingService()
     sandbox.stub(pairingService, 'getStoredIdentityHealth').returns({ health: 'complete', issues: [] })
     sandbox.stub(pairingService, 'hasTrustworthyDeviceId').returns(true)
+    sandbox.stub(pairingService, 'fetchScreenshotPolicy').resolves({
+      enabled: false,
+      interval_seconds: null,
+    })
 
     createCompleteBootstrapStubs()
     const screenshotService = getScreenshotService()
-    sandbox.stub(screenshotService, 'isCaptureEnabled').returns(false)
     const captureStub = sandbox.stub(screenshotService, 'captureAndUpload').resolves('object-key')
 
     const playerFlow = getPlayerFlow()
@@ -527,10 +534,13 @@ describe('Player Flow', () => {
     const pairingService = getPairingService()
     sandbox.stub(pairingService, 'getStoredIdentityHealth').returns({ health: 'complete', issues: [] })
     sandbox.stub(pairingService, 'hasTrustworthyDeviceId').returns(true)
+    sandbox.stub(pairingService, 'fetchScreenshotPolicy').resolves({
+      enabled: true,
+      interval_seconds: 300,
+    })
 
     createCompleteBootstrapStubs()
     const screenshotService = getScreenshotService()
-    sandbox.stub(screenshotService, 'isCaptureEnabled').returns(true)
     const captureStub = sandbox.stub(screenshotService, 'captureAndUpload').rejects(new Error('upload failed'))
 
     const playerFlow = getPlayerFlow()
@@ -539,6 +549,43 @@ describe('Player Flow', () => {
 
     expect(captureStub.calledOnce).to.equal(true)
     expect(playerFlow.getState()).to.equal('PAIRED_RUNTIME')
+
+    await playerFlow.stop()
+  })
+
+  it('should apply fetched screenshot policy before runtime loops start', async () => {
+    const { getPlayerFlow } = require('../../../src/main/services/player-flow')
+    const { getDeviceStateStore } = require('../../../src/main/services/device-state-store')
+    const { getPairingService } = require('../../../src/main/services/pairing-service')
+    const { getScreenshotService } = require('../../../src/main/services/screenshot-service')
+    const { getConfigManager } = require('../../../src/common/config')
+
+    const stateStore = getDeviceStateStore()
+    await stateStore.clearIdentity()
+    await stateStore.update({
+      deviceId: '11111111-1111-4111-8111-111111111111',
+      fingerprint: 'fingerprint-1',
+    })
+
+    const pairingService = getPairingService()
+    sandbox.stub(pairingService, 'getStoredIdentityHealth').returns({ health: 'complete', issues: [] })
+    sandbox.stub(pairingService, 'hasTrustworthyDeviceId').returns(true)
+    const fetchPolicyStub = sandbox.stub(pairingService, 'fetchScreenshotPolicy').resolves({
+      enabled: true,
+      interval_seconds: 45,
+    })
+
+    createCompleteBootstrapStubs()
+    const screenshotService = getScreenshotService()
+    const applyPolicyStub = sandbox.spy(screenshotService, 'applyPolicy')
+
+    const playerFlow = getPlayerFlow()
+    await playerFlow.start()
+
+    expect(fetchPolicyStub.calledOnce).to.equal(true)
+    expect(applyPolicyStub.calledOnceWith({ enabled: true, interval_seconds: 45 })).to.equal(true)
+    expect(screenshotService.isCaptureEnabled()).to.equal(true)
+    expect(getConfigManager().getConfig().intervals.screenshotMs).to.equal(45000)
 
     await playerFlow.stop()
   })

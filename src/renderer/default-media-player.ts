@@ -3,11 +3,13 @@
  */
 
 import type { DefaultMediaResponse, DefaultMediaItem } from '../common/types'
+import type { WebpagePlaybackOptions } from './webpage-playback.js'
 import { createWebpagePlaybackElement } from './webpage-playback.js'
 
 export interface DefaultMediaPlayerOptions {
   debugOverlay?: boolean
   onRefreshRequested?: (reason: string) => void
+  onLog?: WebpagePlaybackOptions['onLog']
 }
 
 export function resolveDefaultMediaSource(media: DefaultMediaItem): string | undefined {
@@ -110,11 +112,13 @@ export class DefaultMediaPlayer {
   private retryAttempt = 0
   private debugEnabled = false
   private onRefreshRequested?: (reason: string) => void
+  private onLog?: WebpagePlaybackOptions['onLog']
   private lastMediaKey?: string
 
   constructor(container: HTMLElement, options: DefaultMediaPlayerOptions = {}) {
     this.container = container
     this.onRefreshRequested = options.onRefreshRequested
+    this.onLog = options.onLog
     this.debugEnabled = options.debugOverlay === true
 
     this.content = document.createElement('div')
@@ -331,6 +335,13 @@ export class DefaultMediaPlayer {
         }
 
         this.handlePlaybackError(reason)
+      },
+      onLog: (level, message, data) => {
+        this.onLog?.(level, message, {
+          mediaId: media.id,
+          mediaType: media.type,
+          ...data,
+        })
       },
     })
   }

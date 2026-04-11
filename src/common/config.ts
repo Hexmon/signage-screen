@@ -4,6 +4,7 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
+import * as net from 'net'
 import { EventEmitter } from 'events'
 import type { AppConfig, RuntimeMode } from './types'
 import { importLegacyLinuxRuntimeState, resolveRuntimePaths, type RuntimePaths } from './platform-paths'
@@ -11,6 +12,35 @@ import { importLegacyLinuxRuntimeState, resolveRuntimePaths, type RuntimePaths }
 const RUNTIME_MODES: RuntimeMode[] = ['dev', 'qa', 'production']
 const LEGACY_COMMAND_POLL_MS = 30000
 const LIVE_COMMAND_POLL_MS = 5000
+const LEGACY_PLAYER_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+
+function buildDefaultPlayerCsp(): string {
+  return [
+    "default-src 'self' data: blob: file: http: https:",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: file: http: https:",
+    "media-src 'self' data: blob: file: http: https:",
+    "connect-src 'self' data: blob: http: https: ws: wss:",
+    "frame-src 'self' data: blob: file: http: https:",
+    "worker-src 'self' blob:",
+    "font-src 'self' data: http: https:",
+    "object-src 'none'",
+  ].join('; ')
+}
+
+function buildDefaultObservabilityBindAddress(allowRemoteAccess: boolean): string {
+  return allowRemoteAccess ? '0.0.0.0' : '127.0.0.1'
+}
+
+function isLoopbackAddress(value: string): boolean {
+  if (!value) {
+    return false
+  }
+
+  const normalized = value.trim().toLowerCase()
+  return normalized === '127.0.0.1' || normalized === '::1' || normalized === 'localhost'
+}
 
 export class ConfigManager {
   private config: AppConfig
@@ -89,12 +119,19 @@ export class ConfigManager {
         offTime: process.env['HEXMON_POWER_OFF_TIME'],
       },
       security: {
-        csp: process.env['HEXMON_SECURITY_CSP'] || "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'",
+        csp: process.env['HEXMON_SECURITY_CSP'] || buildDefaultPlayerCsp(),
         allowedDomains: process.env['HEXMON_SECURITY_ALLOWED_DOMAINS']?.split(',') || [],
         disableEval: process.env['HEXMON_SECURITY_DISABLE_EVAL'] !== 'false',
         contextIsolation: process.env['HEXMON_SECURITY_CONTEXT_ISOLATION'] !== 'false',
         nodeIntegration: process.env['HEXMON_SECURITY_NODE_INTEGRATION'] === 'true',
         sandbox: process.env['HEXMON_SECURITY_SANDBOX'] !== 'false',
+      },
+      observability: {
+        enabled: process.env['HEXMON_OBSERVABILITY_ENABLED'] !== 'false',
+        metricsEnabled: process.env['HEXMON_OBSERVABILITY_METRICS_ENABLED'] !== 'false',
+        bindAddress: process.env['HEXMON_OBSERVABILITY_BIND_ADDRESS'] || buildDefaultObservabilityBindAddress(false),
+        port: parseInt(process.env['HEXMON_OBSERVABILITY_PORT'] || '3300', 10),
+        allowRemoteAccess: process.env['HEXMON_OBSERVABILITY_ALLOW_REMOTE_ACCESS'] === 'true',
       },
     }
   }
@@ -129,19 +166,14 @@ export class ConfigManager {
 
   private buildDefaultApiBase(runtimeMode: RuntimeMode): string {
     const envApiBase =
-      process.env['SIGNAGE_API_BASE_URL'] ||
-      process.env['HEXMON_API_BASE'] ||
-      process.env['API_BASE_URL']
+      process.env['SIGNAGE_API_BASE_URL'] || process.env['HEXMON_API_BASE'] || process.env['API_BASE_URL']
     const normalizedEnv = this.normalizeUrl(envApiBase)
     if (normalizedEnv) return normalizedEnv
     return this.allowLocalhostFallback(runtimeMode) ? 'http://localhost:3000' : ''
   }
 
   private buildDefaultWsUrl(apiBase: string, runtimeMode: RuntimeMode): string {
-    const envWsUrl =
-      process.env['SIGNAGE_WS_URL'] ||
-      process.env['HEXMON_WS_URL'] ||
-      process.env['WS_URL']
+    const envWsUrl = process.env['SIGNAGE_WS_URL'] || process.env['HEXMON_WS_URL'] || process.env['WS_URL']
     const normalizedEnv = this.normalizeUrl(envWsUrl)
     if (normalizedEnv) return normalizedEnv
 
@@ -162,7 +194,10 @@ export class ConfigManager {
     }
 
     this.config = normalized
-    if (merged.intervals.commandPollMs !== normalized.intervals.commandPollMs) {
+    if (
+      merged.intervals.commandPollMs !== normalized.intervals.commandPollMs ||
+      merged.security.csp !== normalized.security.csp
+    ) {
       this.saveConfig()
     }
     return normalized
@@ -192,6 +227,7 @@ export class ConfigManager {
       log: { ...defaults.log, ...overrides.log },
       power: { ...defaults.power, ...overrides.power },
       security: { ...defaults.security, ...overrides.security },
+      observability: { ...defaults.observability, ...overrides.observability },
     }
   }
 
@@ -200,9 +236,20 @@ export class ConfigManager {
     const apiBase = this.normalizeUrl(config.apiBase) || this.buildDefaultApiBase(runtimeMode)
     const wsUrl = this.normalizeUrl(config.wsUrl) || this.buildDefaultWsUrl(apiBase, runtimeMode)
     const commandPollMs =
-      config.intervals.commandPollMs === LEGACY_COMMAND_POLL_MS
-        ? LIVE_COMMAND_POLL_MS
-        : config.intervals.commandPollMs
+      config.intervals.commandPollMs === LEGACY_COMMAND_POLL_MS ? LIVE_COMMAND_POLL_MS : config.intervals.commandPollMs
+    const normalizedCsp =
+      !config.security.csp || config.security.csp.trim() === '' || config.security.csp === LEGACY_PLAYER_CSP
+        ? buildDefaultPlayerCsp()
+        : config.security.csp
+    const allowRemoteAccess = config.observability.allowRemoteAccess === true
+    const requestedBindAddress = config.observability.bindAddress?.trim()
+    const bindAddress = allowRemoteAccess
+      ? requestedBindAddress || buildDefaultObservabilityBindAddress(true)
+      : '127.0.0.1'
+    const port =
+      Number.isFinite(config.observability.port) && config.observability.port > 0
+        ? Math.round(config.observability.port)
+        : 3300
 
     return {
       ...config,
@@ -215,6 +262,16 @@ export class ConfigManager {
       intervals: {
         ...config.intervals,
         commandPollMs,
+      },
+      security: {
+        ...config.security,
+        csp: normalizedCsp,
+      },
+      observability: {
+        ...config.observability,
+        allowRemoteAccess,
+        bindAddress,
+        port,
       },
     }
   }
@@ -256,6 +313,7 @@ export class ConfigManager {
       log: { ...config.log },
       power: { ...config.power },
       security: { ...config.security, allowedDomains: [...config.security.allowedDomains] },
+      observability: { ...config.observability },
     }
   }
 
@@ -389,6 +447,23 @@ export class ConfigManager {
       if (this.config.power.offTime && !timeRegex.test(this.config.power.offTime)) {
         errors.push('power.offTime must be in HH:MM format')
       }
+    }
+
+    if (
+      !Number.isInteger(this.config.observability.port) ||
+      this.config.observability.port < 1 ||
+      this.config.observability.port > 65535
+    ) {
+      errors.push('observability.port must be between 1 and 65535')
+    }
+
+    const bindAddress = this.config.observability.bindAddress.trim()
+    if (!bindAddress) {
+      errors.push('observability.bindAddress is required')
+    } else if (!this.config.observability.allowRemoteAccess && !isLoopbackAddress(bindAddress)) {
+      errors.push('observability.bindAddress must remain loopback unless observability.allowRemoteAccess is true')
+    } else if (bindAddress !== 'localhost' && net.isIP(bindAddress) === 0 && !/^[a-z0-9.-]+$/i.test(bindAddress)) {
+      errors.push('observability.bindAddress must be a valid IP address or hostname')
     }
 
     return {

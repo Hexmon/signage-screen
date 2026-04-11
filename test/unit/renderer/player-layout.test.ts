@@ -36,7 +36,7 @@ describe('Player layout helpers', () => {
     expect(source).to.equal('default')
   })
 
-  it('switches to default content when scheduled playback has no active item', async () => {
+  it('keeps schedule content active when scheduled playback is selected before current item metadata arrives', async () => {
     const { resolvePlayerContentSource } = await import('../../../src/renderer/player.ts')
 
     const source = resolvePlayerContentSource({
@@ -45,7 +45,7 @@ describe('Player layout helpers', () => {
       online: true,
     })
 
-    expect(source).to.equal('default')
+    expect(source).to.equal('schedule')
   })
 
   it('uses manual replay for loop-enabled scheduled videos', async () => {
@@ -72,43 +72,6 @@ describe('Player layout helpers', () => {
         muted: true,
         loop: false,
         transitionDurationMs: 0,
-      }),
-    ).to.equal(false)
-  })
-
-  it('clears scheduled playback when player falls back to default or has no active scheduled item', async () => {
-    const { shouldClearScheduledPlayback } = await import('../../../src/renderer/player.ts')
-
-    expect(
-      shouldClearScheduledPlayback({
-        state: 'PAIRED_RUNTIME',
-        mode: 'default',
-        online: true,
-      }),
-    ).to.equal(true)
-
-    expect(
-      shouldClearScheduledPlayback({
-        state: 'PAIRED_RUNTIME',
-        mode: 'empty',
-        online: true,
-      }),
-    ).to.equal(true)
-
-    expect(
-      shouldClearScheduledPlayback({
-        state: 'PAIRED_RUNTIME',
-        mode: 'normal',
-        online: true,
-      }),
-    ).to.equal(true)
-
-    expect(
-      shouldClearScheduledPlayback({
-        state: 'PAIRED_RUNTIME',
-        mode: 'normal',
-        online: true,
-        currentMediaId: 'media-1',
       }),
     ).to.equal(false)
   })

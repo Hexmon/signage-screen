@@ -8,20 +8,21 @@ import * as path from 'path'
 import { BrowserWindow } from 'electron'
 import { getLogger } from '../../common/logger'
 import { getConfigManager } from '../../common/config'
-import { DeviceApiError } from '../../common/types'
+import { DeviceApiError, ScreenshotPolicyResponse } from '../../common/types'
 import { getHttpClient } from './network/http-client'
 import { getPairingService } from './pairing-service'
 import { getCertificateManager } from './cert-manager'
 import { getRequestQueue } from './network/request-queue'
 import { getLifecycleEvents } from './lifecycle-events'
 import { atomicWrite, ensureDir, generateId } from '../../common/utils'
+import { getPlayerMetrics } from './telemetry/player-metrics'
 
 const logger = getLogger('screenshot-service')
 
 export class ScreenshotService {
   private mainWindow?: BrowserWindow
   private screenshotDir: string
-  private captureEnabled = true
+  private captureEnabled = false
 
   constructor() {
     const config = getConfigManager().getConfig()
@@ -44,6 +45,44 @@ export class ScreenshotService {
 
   isCaptureEnabled(): boolean {
     return this.captureEnabled
+  }
+
+  applyPolicy(
+    policy: Partial<ScreenshotPolicyResponse> & { interval_ms?: number | null; intervalMs?: number | null }
+  ): {
+    enabled: boolean
+    intervalMs?: number
+  } {
+    const enabled = policy.enabled === true
+    this.setCaptureEnabled(enabled)
+
+    if (!enabled) {
+      return { enabled }
+    }
+
+    const rawIntervalMs =
+      typeof policy.intervalMs === 'number'
+        ? policy.intervalMs
+        : typeof policy.interval_ms === 'number'
+          ? policy.interval_ms
+          : typeof policy.interval_seconds === 'number'
+            ? policy.interval_seconds * 1000
+            : undefined
+
+    if (typeof rawIntervalMs !== 'number' || !Number.isFinite(rawIntervalMs)) {
+      return { enabled }
+    }
+
+    const intervalMs = Math.max(10000, Math.round(rawIntervalMs))
+    const configManager = getConfigManager()
+    configManager.updateConfig({
+      intervals: {
+        ...configManager.getConfig().intervals,
+        screenshotMs: intervalMs,
+      },
+    })
+
+    return { enabled, intervalMs }
   }
 
   /**
@@ -97,6 +136,7 @@ export class ScreenshotService {
    * Upload screenshot to backend
    */
   async uploadScreenshot(filepath: string): Promise<string> {
+    const metrics = getPlayerMetrics()
     const pairingService = getPairingService()
     const deviceId = pairingService.getDeviceId()
 
@@ -140,17 +180,22 @@ export class ScreenshotService {
       }
 
       logger.info({ objectKey: response?.object_key }, 'Screenshot uploaded successfully')
+      metrics.recordScreenshotUpload('success')
 
       // Delete local file after successful upload
       fs.unlinkSync(filepath)
 
       return response?.object_key || ''
     } catch (error) {
-      if (error instanceof DeviceApiError && (error.code === 'UNAUTHORIZED' || error.code === 'FORBIDDEN' || error.code === 'NOT_FOUND')) {
+      if (
+        error instanceof DeviceApiError &&
+        (error.code === 'UNAUTHORIZED' || error.code === 'FORBIDDEN' || error.code === 'NOT_FOUND')
+      ) {
         getLifecycleEvents().emitRuntimeAuthFailure({
           source: 'screenshot',
           error,
         })
+        metrics.recordScreenshotUpload('auth_failure')
         throw error
       }
 
@@ -171,8 +216,10 @@ export class ScreenshotService {
           maxRetries: 3,
         })
         logger.info('Screenshot enqueued for retry')
+        metrics.recordScreenshotUpload('queued')
       } catch (queueError) {
         logger.error({ error: queueError }, 'Failed to enqueue screenshot for retry')
+        metrics.recordScreenshotUpload('failed')
       } finally {
         try {
           fs.unlinkSync(filepath)
@@ -214,7 +261,7 @@ export class ScreenshotService {
   /**
    * Cleanup old screenshots
    */
-  async cleanupOldScreenshots(maxAgeMs: number = 24 * 60 * 60 * 1000): Promise<void> {
+  cleanupOldScreenshots(maxAgeMs: number = 24 * 60 * 60 * 1000): void {
     logger.info({ maxAgeMs }, 'Cleaning up old screenshots')
 
     try {
