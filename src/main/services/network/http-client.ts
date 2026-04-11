@@ -67,15 +67,35 @@ export class HttpClient {
 
         if (this.isDeviceEndpoint(config.url || '')) {
           const state = getDeviceStateStore().getState()
+          const deviceId = state.deviceId || getConfigManager().getConfig().deviceId
           const metadata = getCertificateManager().getCertificateMetadata()
           const headerValue = state.fingerprint || metadata?.serialNumber || metadata?.fingerprint
+          const headers = AxiosHeaders.from(config.headers ?? {})
           if (!headerValue) {
             logger.warn({ url: config.url }, 'No device auth header value available for device request')
           } else {
-            const headers = AxiosHeaders.from(config.headers ?? {})
             headers.set('x-device-serial', headerValue)
-            config.headers = headers
           }
+
+          if (headerValue && deviceId) {
+            try {
+              const timestamp = Date.now().toString()
+              const signature = await getCertificateManager().signDeviceRequest({
+                method: (config.method || 'GET').toUpperCase(),
+                url: this.buildRequestSignatureUrl(config),
+                deviceId,
+                timestamp,
+              })
+
+              headers.set('x-device-auth-version', 'v1')
+              headers.set('x-device-timestamp', timestamp)
+              headers.set('x-device-signature', signature)
+            } catch (error) {
+              logger.debug({ url: config.url, error: String(error) }, 'Skipping device request signature')
+            }
+          }
+
+          config.headers = headers
         }
 
         return config
@@ -256,6 +276,22 @@ export class HttpClient {
     if (base.startsWith('http://')) return false
 
     return false
+  }
+
+  private buildRequestSignatureUrl(config: AxiosRequestConfig): string {
+    const rawUrl = config.url || '/'
+    if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
+      const parsed = new URL(rawUrl)
+      return `${parsed.pathname}${parsed.search}`
+    }
+
+    const baseUrl = config.baseURL || this.client.defaults.baseURL || ''
+    if (baseUrl.startsWith('http://') || baseUrl.startsWith('https://')) {
+      const parsed = new URL(rawUrl, baseUrl)
+      return `${parsed.pathname}${parsed.search}`
+    }
+
+    return rawUrl
   }
 
   private isDeviceEndpoint(url: string): boolean {

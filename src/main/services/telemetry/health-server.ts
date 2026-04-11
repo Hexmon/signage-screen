@@ -11,6 +11,8 @@ import { HealthStatus } from '../../../common/types'
 import { getSystemStatsCollector } from './system-stats'
 import { getCacheManager } from '../cache/cache-manager'
 import { getPlayerMetrics } from './player-metrics'
+import { getRequestQueue } from '../network/request-queue'
+import { getProofOfPlayService } from '../pop-service'
 
 const logger = getLogger('health-server')
 
@@ -140,6 +142,8 @@ export class HealthServer {
 
     const cacheManager = getCacheManager()
     const cacheUsage = await cacheManager.getStats()
+    const requestQueue = getRequestQueue()
+    const proofOfPlayService = getProofOfPlayService()
 
     // Determine overall status
     let status: HealthStatus['status'] = 'healthy'
@@ -160,6 +164,17 @@ export class HealthServer {
       uptime: systemStats.uptime,
       lastScheduleSync: this.lastScheduleSync,
       cacheUsage,
+      offlineReplay: {
+        requestQueue: {
+          stats: requestQueue.getStats(),
+          budgets: requestQueue.getBudgetSnapshot(),
+          oldestAgeSeconds: requestQueue.getOldestAgeSeconds(),
+        },
+        proofOfPlay: {
+          stats: proofOfPlayService.getReplayStats(),
+          budgets: proofOfPlayService.getReplayBudget(),
+        },
+      },
       lastErrors: this.lastErrors.slice(-5), // Last 5 errors
       systemStats,
       timestamp: new Date().toISOString(),

@@ -31,6 +31,7 @@ export interface MTLSConfig {
   certPath: string
   keyPath: string
   caPath: string
+  strictCertificateValidation: boolean
   autoRenew: boolean
   renewBeforeDays: number
 }
@@ -487,12 +488,93 @@ export interface HeartbeatPayload {
   power_source?: PowerSource
 }
 
+export type RequestQueueCategory = 'heartbeat' | 'screenshot' | 'command-ack' | 'default'
+
+export interface RequestQueueBudget {
+  maxItems: number
+  maxBytes: number
+  replayBatchSize: number
+  replayDelayMs: [number, number]
+}
+
+export interface RequestQueueCategoryStats {
+  pendingItems: number
+  pendingBytes: number
+  dropped: number
+  compacted: number
+}
+
+export interface RequestQueueStats {
+  pendingItems: number
+  pendingBytes: number
+  dropped: number
+  droppedBytes: number
+  compacted: number
+  compactedBytes: number
+  lastDropReason?: string
+  lastDropAt?: string
+  lastCompactionReason?: string
+  lastCompactionAt?: string
+  categories: Record<RequestQueueCategory, RequestQueueCategoryStats>
+}
+
+export interface RequestQueueBudgetSnapshot {
+  totalMaxItems: number
+  totalMaxBytes: number
+  categories: Record<RequestQueueCategory, RequestQueueBudget>
+}
+
+export interface RequestQueueOldestAgeSeconds {
+  all: number
+  heartbeat: number
+  screenshot: number
+  'command-ack': number
+  default: number
+}
+
+export interface ProofOfPlayReplayStats {
+  bufferItems: number
+  bufferBytes: number
+  spoolFiles: number
+  spoolBytes: number
+  droppedEvents: number
+  droppedBytes: number
+  compactedEvents: number
+  compactedBytes: number
+  lastDropReason?: string
+  lastDropAt?: string
+  lastCompactionReason?: string
+  lastCompactionAt?: string
+}
+
+export interface ProofOfPlayReplayBudgetSnapshot {
+  maxBufferEvents: number
+  maxBufferBytes: number
+  maxSpoolFiles: number
+  maxSpoolBytes: number
+  maxSpoolEventsPerFile: number
+  maxReplayBatchSize: number
+}
+
+export interface OfflineReplayStatus {
+  requestQueue: {
+    stats: RequestQueueStats
+    budgets: RequestQueueBudgetSnapshot
+    oldestAgeSeconds: RequestQueueOldestAgeSeconds
+  }
+  proofOfPlay: {
+    stats: ProofOfPlayReplayStats
+    budgets: ProofOfPlayReplayBudgetSnapshot
+  }
+}
+
 export interface HealthStatus {
   status: 'healthy' | 'degraded' | 'unhealthy'
   appVersion: string
   uptime: number
   lastScheduleSync?: string
   cacheUsage: CacheStats
+  offlineReplay: OfflineReplayStatus
   lastErrors: string[]
   systemStats: SystemStats
   timestamp: string

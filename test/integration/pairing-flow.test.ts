@@ -2,7 +2,11 @@ const { expect } = require('chai')
 const sinon = require('sinon')
 const fs = require('fs')
 const path = require('path')
-const { createTempDir, cleanupTempDir, createMockCertificate } = require('../helpers/test-utils.ts')
+const {
+  createTempDir,
+  cleanupTempDir,
+  issueSignedCertificateFromCsr,
+} = require('../helpers/test-utils.ts')
 
 describe('Pairing Flow Integration', () => {
   let tempDir: string
@@ -89,13 +93,12 @@ describe('Pairing Flow Integration', () => {
 
     expect(csr).to.include('BEGIN CERTIFICATE REQUEST')
 
-    const mockCert = createMockCertificate()
-    sandbox.stub(certManager, 'verifyCertificate').resolves(true)
+    const issued = issueSignedCertificateFromCsr(csr)
     sandbox.stub(httpClient, 'post').resolves({
       device_id: 'test-device-123',
-      certificate: mockCert.cert,
-      ca_certificate: mockCert.cert,
-      fingerprint: 'fingerprint-123',
+      certificate: issued.certPem,
+      ca_certificate: issued.caCertPem,
+      fingerprint: '1002',
       expires_at: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
     })
 
@@ -104,7 +107,7 @@ describe('Pairing Flow Integration', () => {
 
     expect(result.device_id).to.equal('test-device-123')
     expect(persisted.deviceId).to.equal('test-device-123')
-    expect(persisted.fingerprint).to.equal('fingerprint-123')
+    expect(persisted.fingerprint).to.equal('1002')
     expect(persisted.pairingCode).to.equal(undefined)
     expect(persisted.pairingExpiresAt).to.equal(undefined)
     expect(fs.existsSync(path.join(certDir, 'client.key'))).to.equal(true)

@@ -297,7 +297,15 @@ export class CommandProcessor {
   private handleSetScreenshotInterval(command: Command): CommandResult {
     const screenshotService = getScreenshotService()
     const enabledParam = command.params?.['enabled']
-    const enabled = typeof enabledParam === 'boolean' ? enabledParam : true
+    if (typeof enabledParam !== 'boolean') {
+      return {
+        success: false,
+        error: 'Missing screenshot enabled flag',
+        timestamp: new Date().toISOString(),
+      }
+    }
+
+    const enabled = enabledParam
 
     const rawIntervalSeconds = command.params?.['interval_seconds']
     const rawIntervalMilliseconds = command.params?.['interval_ms'] ?? command.params?.['intervalMs']

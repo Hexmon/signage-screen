@@ -193,4 +193,79 @@ describe('Heartbeat Service', () => {
     expect(metrics).to.contain('signhex_player_heartbeat_total{result="success"} 1')
     expect(metrics).to.contain('signhex_player_last_successful_heartbeat_unixtime')
   })
+
+  it('coalesces immediate and scheduled heartbeats so only one POST stays in flight', async () => {
+    const clock = sandbox.useFakeTimers({
+      now: new Date('2026-04-07T10:00:00.000Z'),
+      shouldAdvanceTime: false,
+    })
+
+    const { getHeartbeatService } = require('../../../src/main/services/telemetry/heartbeat')
+    const { getHttpClient } = require('../../../src/main/services/network/http-client')
+    const { getSystemStatsCollector } = require('../../../src/main/services/telemetry/system-stats')
+    const { getPairingService } = require('../../../src/main/services/pairing-service')
+    const { getCommandProcessor } = require('../../../src/main/services/command-processor')
+    const { getDeviceStateStore } = require('../../../src/main/services/device-state-store')
+    const { getPlayerMetrics } = require('../../../src/main/services/telemetry/player-metrics')
+
+    const heartbeatService = getHeartbeatService()
+    const httpClient = getHttpClient()
+    const statsCollector = getSystemStatsCollector()
+    const pairingService = getPairingService()
+    const commandProcessor = getCommandProcessor()
+    const deviceStateStore = getDeviceStateStore()
+
+    const stats = {
+      cpuUsage: 5,
+      cpuCores: 4,
+      cpuLoad1m: 0.5,
+      cpuLoad5m: 0.5,
+      cpuLoad15m: 0.5,
+      memoryUsage: 512 * 1024 * 1024,
+      memoryTotal: 1024 * 1024 * 1024,
+      memoryFree: 512 * 1024 * 1024,
+      diskUsage: 10 * 1024 * 1024 * 1024,
+      diskTotal: 20 * 1024 * 1024 * 1024,
+      diskFree: 10 * 1024 * 1024 * 1024,
+      uptime: 120,
+      networkInterfaces: [],
+      primaryNetworkInterface: 'eth0',
+      primaryNetworkAddress: '10.0.0.1',
+      displayCount: 1,
+      displays: [],
+      hostname: 'player-host',
+      osVersion: 'linux',
+    }
+
+    sandbox.stub(pairingService, 'isPairedDevice').returns(true)
+    sandbox.stub(pairingService, 'getDeviceId').returns('device-123')
+    sandbox.stub(statsCollector, 'collect').resolves(stats)
+    sandbox.stub(commandProcessor, 'ingestCommands').resolves()
+    sandbox.stub(deviceStateStore, 'update').resolves()
+
+    let resolvePost
+    const postPromise = new Promise((resolve) => {
+      resolvePost = resolve
+    })
+    const postStub = sandbox.stub(httpClient, 'post').returns(postPromise)
+
+    heartbeatService.start()
+    await clock.tickAsync(0)
+    expect(postStub.callCount).to.equal(1)
+
+    const immediatePromise = heartbeatService.sendImmediate()
+    expect(postStub.callCount).to.equal(1)
+
+    await clock.tickAsync(30000)
+    expect(postStub.callCount).to.equal(1)
+
+    resolvePost({ success: true, timestamp: new Date().toISOString(), commands: [] })
+    await immediatePromise
+
+    const metrics = await getPlayerMetrics().renderPrometheusMetrics(async () => stats)
+    expect(metrics).to.contain('signhex_player_heartbeat_total{result="skipped_in_flight"} 1')
+    expect(metrics).to.contain('signhex_player_heartbeat_skips_total{reason="in_flight"} 1')
+
+    heartbeatService.stop()
+  })
 })

@@ -7,11 +7,24 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { getLogger } from '../../common/logger'
 import { getConfigManager } from '../../common/config'
-import { DeviceApiError, ProofOfPlayEvent } from '../../common/types'
+import {
+  DeviceApiError,
+  ProofOfPlayEvent,
+  type ProofOfPlayReplayBudgetSnapshot,
+  type ProofOfPlayReplayStats,
+} from '../../common/types'
 import { atomicWrite, ensureDir, generateId, sleep } from '../../common/utils'
 import { getHttpClient } from './network/http-client'
 import { getPairingService } from './pairing-service'
 import { getLifecycleEvents } from './lifecycle-events'
+import {
+  POP_REPLAY_BUFFER_MAX_BYTES,
+  POP_REPLAY_BUFFER_MAX_EVENTS,
+  POP_REPLAY_MAX_BATCH_SIZE,
+  POP_REPLAY_MAX_EVENTS_PER_FILE,
+  POP_REPLAY_SPOOL_MAX_FILES,
+  deriveProofOfPlaySpoolMaxBytes,
+} from './offline-replay-budgets'
 
 const logger = getLogger('pop-service')
 
@@ -25,21 +38,6 @@ interface BufferedProofOfPlayEvent extends ProofOfPlayEvent {
   source: 'live' | 'spool'
 }
 
-export interface ProofOfPlayReplayStats {
-  bufferItems: number
-  bufferBytes: number
-  spoolFiles: number
-  spoolBytes: number
-  droppedEvents: number
-  droppedBytes: number
-  compactedEvents: number
-  compactedBytes: number
-  lastDropReason?: string
-  lastDropAt?: string
-  lastCompactionReason?: string
-  lastCompactionAt?: string
-}
-
 interface SpoolFileEntry {
   filePath: string
   fileName: string
@@ -47,19 +45,8 @@ interface SpoolFileEntry {
   mtimeMs: number
 }
 
-const MAX_BUFFER_EVENTS = 100
-const MAX_BUFFER_BYTES = 512 * 1024
-const MAX_SPOOL_FILES = 32
-const MAX_SPOOL_BYTES_MIN = 1024 * 1024
-const MAX_SPOOL_BYTES_MAX = 16 * 1024 * 1024
-const MAX_SPOOL_EVENTS_PER_FILE = 50
-const MAX_REPLAY_BATCH_SIZE = 25
 const IDLE_FLUSH_MS = 60000
 const BACKLOG_FLUSH_MS = 15000
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value))
-}
 
 function stripReplayMetadata(event: BufferedProofOfPlayEvent | ProofOfPlayEvent): ProofOfPlayEvent {
   return {
@@ -97,7 +84,7 @@ export class ProofOfPlayService {
     const config = getConfigManager().getConfig()
     this.spoolPath = path.join(config.cache.path, 'pop-spool')
     this.statePath = path.join(config.cache.path, 'pop-spool-state.json')
-    this.maxSpoolBytes = clamp(Math.round(config.cache.maxBytes * 0.02), MAX_SPOOL_BYTES_MIN, MAX_SPOOL_BYTES_MAX)
+    this.maxSpoolBytes = deriveProofOfPlaySpoolMaxBytes(config.cache.maxBytes)
     ensureDir(this.spoolPath, 0o755)
 
     this.activePlaybacks = new Map()
@@ -175,7 +162,7 @@ export class ProofOfPlayService {
       })
       logger.debug({ scheduleId, mediaId, durationSeconds, completed }, 'Playback ended')
 
-      if (this.eventBuffer.length >= MAX_BUFFER_EVENTS) {
+      if (this.eventBuffer.length >= POP_REPLAY_BUFFER_MAX_EVENTS) {
         this.flushEvents().catch((error) => {
           logger.error({ error }, 'Failed to flush events')
         })
@@ -318,7 +305,7 @@ export class ProofOfPlayService {
     let overflowEvents: BufferedProofOfPlayEvent[] = []
     let bufferBytes = this.eventBuffer.reduce((total, event) => total + this.estimateEventSize(event), 0)
 
-    while (this.eventBuffer.length > MAX_BUFFER_EVENTS || bufferBytes > MAX_BUFFER_BYTES) {
+    while (this.eventBuffer.length > POP_REPLAY_BUFFER_MAX_EVENTS || bufferBytes > POP_REPLAY_BUFFER_MAX_BYTES) {
       const removed = this.eventBuffer.shift()
       if (!removed) {
         break
@@ -342,8 +329,8 @@ export class ProofOfPlayService {
     }
 
     const chunks: ProofOfPlayEvent[][] = []
-    for (let index = 0; index < events.length; index += MAX_SPOOL_EVENTS_PER_FILE) {
-      chunks.push(events.slice(index, index + MAX_SPOOL_EVENTS_PER_FILE))
+    for (let index = 0; index < events.length; index += POP_REPLAY_MAX_EVENTS_PER_FILE) {
+      chunks.push(events.slice(index, index + POP_REPLAY_MAX_EVENTS_PER_FILE))
     }
 
     for (const chunk of chunks) {
@@ -366,7 +353,7 @@ export class ProofOfPlayService {
     let totalBytes = files.reduce((total, file) => total + file.sizeBytes, 0)
     let remainingFiles = [...files]
 
-    while (remainingFiles.length > MAX_SPOOL_FILES || totalBytes > this.maxSpoolBytes) {
+    while (remainingFiles.length > POP_REPLAY_SPOOL_MAX_FILES || totalBytes > this.maxSpoolBytes) {
       const oldest = remainingFiles.shift()
       if (!oldest) {
         break
@@ -460,8 +447,8 @@ export class ProofOfPlayService {
         return
       }
 
-      const liveBatch = this.eventBuffer.splice(0, MAX_REPLAY_BATCH_SIZE)
-      const spoolBatch = await this.loadSpoolBatch(MAX_REPLAY_BATCH_SIZE - liveBatch.length)
+      const liveBatch = this.eventBuffer.splice(0, POP_REPLAY_MAX_BATCH_SIZE)
+      const spoolBatch = await this.loadSpoolBatch(POP_REPLAY_MAX_BATCH_SIZE - liveBatch.length)
       const replayBatch = [...liveBatch, ...spoolBatch.events]
       if (replayBatch.length === 0) {
         return
@@ -571,6 +558,17 @@ export class ProofOfPlayService {
   getReplayStats(): ProofOfPlayReplayStats {
     this.refreshStats()
     return JSON.parse(JSON.stringify(this.stats))
+  }
+
+  getReplayBudget(): ProofOfPlayReplayBudgetSnapshot {
+    return {
+      maxBufferEvents: POP_REPLAY_BUFFER_MAX_EVENTS,
+      maxBufferBytes: POP_REPLAY_BUFFER_MAX_BYTES,
+      maxSpoolFiles: POP_REPLAY_SPOOL_MAX_FILES,
+      maxSpoolBytes: this.maxSpoolBytes,
+      maxSpoolEventsPerFile: POP_REPLAY_MAX_EVENTS_PER_FILE,
+      maxReplayBatchSize: POP_REPLAY_MAX_BATCH_SIZE,
+    }
   }
 
   async cleanup(): Promise<void> {

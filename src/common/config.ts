@@ -87,6 +87,7 @@ export class ConfigManager {
         certPath: defaultCertPath,
         keyPath: defaultKeyPath,
         caPath: defaultCaPath,
+        strictCertificateValidation: process.env['HEXMON_MTLS_STRICT_CERTIFICATE_VALIDATION'] !== 'false',
         autoRenew: process.env['HEXMON_MTLS_AUTO_RENEW'] !== 'false',
         renewBeforeDays: parseInt(process.env['HEXMON_MTLS_RENEW_BEFORE_DAYS'] || '30', 10),
       },

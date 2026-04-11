@@ -11,6 +11,7 @@ import { getLogger } from '../../common/logger'
 import { getConfigManager } from '../../common/config'
 import { atomicWrite, ensureDir } from '../../common/utils'
 import { DeviceInfo } from '../../common/types'
+import { getPlayerMetrics } from './telemetry/player-metrics'
 
 const logger = getLogger('cert-manager')
 
@@ -30,6 +31,7 @@ export interface CertificateMetadata {
   subject: string
   issuer: string
   serialNumber: string
+  verificationMode: 'x509' | 'compatibility'
 }
 
 export interface CSRSubjectOverrides {
@@ -59,6 +61,45 @@ export class CertificateManager {
     // Ensure certificate directory exists with secure permissions
     const certDir = path.dirname(this.certPath)
     ensureDir(certDir, 0o700)
+  }
+
+  /**
+   * Check if the device private key is present for request signing
+   */
+  hasPrivateKey(): boolean {
+    return fs.existsSync(this.keyPath)
+  }
+
+  private buildDeviceRequestSignaturePayload(params: {
+    method: string
+    url: string
+    deviceId: string
+    timestamp: string
+  }): string {
+    return [
+      'HEXMON_DEVICE_AUTH_V1',
+      params.method.trim().toUpperCase(),
+      params.url.trim(),
+      params.deviceId.trim(),
+      params.timestamp.trim(),
+    ].join('\n')
+  }
+
+  async signDeviceRequest(params: {
+    method: string
+    url: string
+    deviceId: string
+    timestamp: string
+  }): Promise<string> {
+    if (!this.hasPrivateKey()) {
+      throw new Error('Private key not found')
+    }
+
+    const privateKey = fs.readFileSync(this.keyPath, 'utf-8')
+    const signer = crypto.createSign('RSA-SHA256')
+    signer.update(this.buildDeviceRequestSignaturePayload(params))
+    signer.end()
+    return signer.sign(privateKey, 'base64')
   }
 
   /**
@@ -183,6 +224,8 @@ export class CertificateManager {
     logger.info('Storing certificates')
 
     try {
+      const { strictCertificateValidation } = getConfigManager().getConfig().mtls
+
       // Store client certificate
       await atomicWrite(this.certPath, cert)
       fs.chmodSync(this.certPath, 0o600)
@@ -201,7 +244,18 @@ export class CertificateManager {
       // fail strict local X509 parsing in some runtimes; do not fail pairing for that.
       const isValid = await this.verifyCertificate()
       if (!isValid) {
-        logger.warn('Certificate verification failed locally; continuing with stored certificate metadata')
+        if (strictCertificateValidation) {
+          getPlayerMetrics().recordCertificateValidation('strict_rejected')
+          this.deleteStoredCertificateArtifacts({ keepPrivateKey: true })
+          throw new Error('Strict certificate validation failed for the received certificate chain')
+        }
+
+        getPlayerMetrics().recordCertificateValidation('compatibility_accepted')
+        logger.warn(
+          'Certificate verification failed locally; accepting compatibility certificate because strict validation is disabled'
+        )
+      } else {
+        getPlayerMetrics().recordCertificateValidation('x509_valid')
       }
 
       logger.info({ verified: isValid }, 'Certificates stored')
@@ -306,6 +360,7 @@ export class CertificateManager {
           subject: 'unknown',
           issuer: 'unknown',
           serialNumber: fingerprint,
+          verificationMode: 'compatibility',
         }
         await atomicWrite(this.metadataPath, JSON.stringify(metadata, null, 2))
         fs.chmodSync(this.metadataPath, 0o600)
@@ -323,6 +378,7 @@ export class CertificateManager {
       subject: info.subject,
       issuer: info.issuer,
       serialNumber: info.serialNumber,
+      verificationMode: 'x509',
     }
 
     await atomicWrite(this.metadataPath, JSON.stringify(metadata, null, 2))
@@ -363,6 +419,9 @@ export class CertificateManager {
         return false
       }
 
+      const certPem = fs.readFileSync(this.certPath, 'utf-8')
+      const caPem = fs.readFileSync(this.caPath, 'utf-8')
+      const privateKeyPem = fs.readFileSync(this.keyPath, 'utf-8')
       const certInfo = await this.getCertificateInfo()
       if (!certInfo) {
         return false
@@ -372,6 +431,33 @@ export class CertificateManager {
       const now = new Date()
       if (now < certInfo.validFrom || now > certInfo.validTo) {
         logger.warn({ validFrom: certInfo.validFrom, validTo: certInfo.validTo }, 'Certificate is expired or not yet valid')
+        return false
+      }
+
+      const certificate = new crypto.X509Certificate(certPem)
+      const caCertificate = new crypto.X509Certificate(caPem)
+
+      if (certificate.issuer !== caCertificate.subject) {
+        logger.warn('Certificate issuer does not match the configured CA')
+        return false
+      }
+
+      if (!certificate.verify(caCertificate.publicKey)) {
+        logger.warn('Certificate signature verification failed against the configured CA')
+        return false
+      }
+
+      const certificatePublicKeyDer = Buffer.from(
+        certificate.publicKey.export({ type: 'spki', format: 'der' })
+      )
+      const privateKeyPublicDer = Buffer.from(
+        crypto
+        .createPublicKey(crypto.createPrivateKey(privateKeyPem))
+        .export({ type: 'spki', format: 'der' })
+      )
+
+      if (!certificatePublicKeyDer.equals(privateKeyPublicDer)) {
+        logger.warn('Certificate public key does not match the stored private key')
         return false
       }
 
@@ -389,7 +475,14 @@ export class CertificateManager {
   async deleteCertificates(): Promise<void> {
     logger.warn('Deleting certificates')
 
-    const files = [this.certPath, this.keyPath, this.caPath, this.csrPath, this.metadataPath]
+    this.deleteStoredCertificateArtifacts()
+  }
+
+  private deleteStoredCertificateArtifacts(options: { keepPrivateKey?: boolean } = {}): void {
+    const files = [this.certPath, this.caPath, this.csrPath, this.metadataPath]
+    if (!options.keepPrivateKey) {
+      files.push(this.keyPath)
+    }
 
     for (const file of files) {
       if (fs.existsSync(file)) {

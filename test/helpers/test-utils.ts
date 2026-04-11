@@ -5,6 +5,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import * as crypto from 'crypto'
+import forge from 'node-forge'
 
 /**
  * Create a temporary directory for tests
@@ -99,6 +100,81 @@ pipepipepipepipepipepipepipepipepipeoAAwCgYIKoZIzj0EAwIDSAAwRQIh
 AJipepipepipepipepipepipepipepipepipepipeAiAYqXqYqXqYqXqYqXqYqXqYqXq
 YqXqYqXqYqXqYqXqYqXqYg==
 -----END CERTIFICATE REQUEST-----`,
+  }
+}
+
+export function createTestCertificateAuthority(commonName: string = 'Hexmon Test CA'): {
+  certPem: string
+  keyPem: string
+} {
+  const keyPair = forge.pki.rsa.generateKeyPair(2048)
+  const certificate = forge.pki.createCertificate()
+  certificate.publicKey = keyPair.publicKey
+  certificate.serialNumber = '1001'
+  certificate.validity.notBefore = new Date(Date.now() - 60 * 1000)
+  certificate.validity.notAfter = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
+  certificate.setSubject([{ name: 'commonName', value: commonName }])
+  certificate.setIssuer([{ name: 'commonName', value: commonName }])
+  certificate.setExtensions([
+    { name: 'basicConstraints', cA: true },
+    { name: 'keyUsage', keyCertSign: true, cRLSign: true, digitalSignature: true },
+    { name: 'subjectKeyIdentifier' },
+  ])
+  certificate.sign(keyPair.privateKey, forge.md.sha256.create())
+
+  return {
+    certPem: forge.pki.certificateToPem(certificate),
+    keyPem: forge.pki.privateKeyToPem(keyPair.privateKey),
+  }
+}
+
+export function issueSignedCertificateFromCsr(
+  csrPem: string,
+  options: {
+    caCertPem?: string
+    caKeyPem?: string
+    serialNumber?: string
+    validDays?: number
+  } = {}
+): {
+  certPem: string
+  caCertPem: string
+  caKeyPem: string
+} {
+  const ca = options.caCertPem && options.caKeyPem
+    ? { certPem: options.caCertPem, keyPem: options.caKeyPem }
+    : createTestCertificateAuthority()
+
+  const csr = forge.pki.certificationRequestFromPem(csrPem)
+  if (!csr.verify()) {
+    throw new Error('CSR verification failed in test helper')
+  }
+
+  const certificate = forge.pki.createCertificate()
+  certificate.publicKey = csr.publicKey
+  certificate.serialNumber = options.serialNumber || '1002'
+  certificate.validity.notBefore = new Date(Date.now() - 60 * 1000)
+  certificate.validity.notAfter = new Date(
+    Date.now() + (options.validDays ?? 365) * 24 * 60 * 60 * 1000
+  )
+  certificate.setSubject(csr.subject.attributes)
+
+  const caCertificate = forge.pki.certificateFromPem(ca.certPem)
+  const caPrivateKey = forge.pki.privateKeyFromPem(ca.keyPem)
+  certificate.setIssuer(caCertificate.subject.attributes)
+  certificate.setExtensions([
+    { name: 'basicConstraints', cA: false },
+    { name: 'keyUsage', digitalSignature: true, keyEncipherment: true },
+    { name: 'extKeyUsage', clientAuth: true },
+    { name: 'subjectKeyIdentifier' },
+    { name: 'authorityKeyIdentifier', keyIdentifier: true, authorityCertIssuer: true, serialNumber: caCertificate.serialNumber },
+  ])
+  certificate.sign(caPrivateKey, forge.md.sha256.create())
+
+  return {
+    certPem: forge.pki.certificateToPem(certificate),
+    caCertPem: ca.certPem,
+    caKeyPem: ca.keyPem,
   }
 }
 
@@ -211,4 +287,3 @@ export function isWindows(): boolean {
 export function isLinux(): boolean {
   return process.platform === 'linux'
 }
-
