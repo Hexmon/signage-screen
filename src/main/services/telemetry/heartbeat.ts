@@ -4,7 +4,7 @@
 
 import { getLogger } from '../../../common/logger'
 import { getConfigManager } from '../../../common/config'
-import { Command, DeviceApiError, HeartbeatPayload, SystemStats } from '../../../common/types'
+import { ActiveSlotPlayback, Command, DeviceApiError, HeartbeatPayload, SystemStats } from '../../../common/types'
 import { getHttpClient } from '../network/http-client'
 import { getRequestQueue } from '../network/request-queue'
 import { getPairingService } from '../pairing-service'
@@ -17,10 +17,13 @@ import { getPlayerMetrics } from './player-metrics'
 const logger = getLogger('heartbeat')
 
 export class HeartbeatService {
-  private interval?: NodeJS.Timeout
+  private timer?: NodeJS.Timeout
   private isRunning = false
   private currentScheduleId?: string
   private currentMediaId?: string
+  private currentSceneId?: string
+  private activeSlots: ActiveSlotPlayback[] = []
+  private inFlightHeartbeat?: Promise<void>
 
   /**
    * Start heartbeat service
@@ -37,16 +40,7 @@ export class HeartbeatService {
     logger.info({ intervalMs }, 'Starting heartbeat service')
 
     this.isRunning = true
-    this.interval = setInterval(() => {
-      this.sendHeartbeat().catch((error: unknown) => {
-        logger.error({ error }, 'Failed to send heartbeat')
-      })
-    }, intervalMs)
-
-    // Send initial heartbeat
-    this.sendHeartbeat().catch((error: unknown) => {
-      logger.error({ error }, 'Failed to send initial heartbeat')
-    })
+    this.scheduleNextHeartbeat(0)
   }
 
   /**
@@ -59,16 +53,63 @@ export class HeartbeatService {
 
     logger.info('Stopping heartbeat service')
 
-    if (this.interval) {
-      clearInterval(this.interval)
-      this.interval = undefined
+    if (this.timer) {
+      clearTimeout(this.timer)
+      this.timer = undefined
     }
 
     this.isRunning = false
   }
 
   async sendImmediate(): Promise<void> {
-    await this.sendHeartbeat()
+    await this.sendHeartbeatSingleFlight('immediate')
+  }
+
+  private scheduleNextHeartbeat(delayMs: number): void {
+    if (!this.isRunning) {
+      return
+    }
+
+    if (this.timer) {
+      clearTimeout(this.timer)
+    }
+
+    this.timer = setTimeout(() => {
+      void this.runScheduledHeartbeat()
+    }, Math.max(0, Math.round(delayMs)))
+  }
+
+  private async runScheduledHeartbeat(): Promise<void> {
+    if (!this.isRunning) {
+      return
+    }
+
+    const intervalMs = getConfigManager().getConfig().intervals.heartbeatMs
+    this.scheduleNextHeartbeat(intervalMs)
+
+    try {
+      await this.sendHeartbeatSingleFlight('scheduled')
+    } catch (error) {
+      logger.error({ error }, 'Failed to send heartbeat')
+    }
+  }
+
+  private sendHeartbeatSingleFlight(source: 'scheduled' | 'immediate'): Promise<void> {
+    if (this.inFlightHeartbeat) {
+      if (source === 'scheduled') {
+        logger.debug('Skipping overlapping scheduled heartbeat; existing send is still in flight')
+        getPlayerMetrics().safeRecordHeartbeat('skipped_in_flight', 0)
+      }
+      return this.inFlightHeartbeat
+    }
+
+    const heartbeatPromise = this.sendHeartbeat().finally(() => {
+      if (this.inFlightHeartbeat === heartbeatPromise) {
+        this.inFlightHeartbeat = undefined
+      }
+    })
+    this.inFlightHeartbeat = heartbeatPromise
+    return heartbeatPromise
   }
 
   private toMegabytes(value: number): number {
@@ -129,6 +170,8 @@ export class HeartbeatService {
       temperature: stats.temperature,
       current_schedule_id: this.currentScheduleId,
       current_media_id: this.currentMediaId,
+      current_scene_id: this.currentSceneId,
+      active_slots: this.activeSlots,
       memory_total_mb: this.toMegabytes(stats.memoryTotal),
       memory_used_mb: this.toMegabytes(stats.memoryUsage),
       memory_free_mb: this.toMegabytes(stats.memoryFree),
@@ -227,7 +270,7 @@ export class HeartbeatService {
       // Queue for later if offline
       const requestQueue = getRequestQueue()
       try {
-        await requestQueue.enqueue({
+        const queued = await requestQueue.enqueue({
           method: 'POST',
           url: '/api/v1/device/heartbeat',
           data:
@@ -242,6 +285,10 @@ export class HeartbeatService {
                 },
           maxRetries: 3,
         })
+        if (!queued) {
+          metrics.safeRecordHeartbeat('failed', (Date.now() - startedAt) / 1000)
+          throw new Error('Heartbeat retry queue rejected the payload')
+        }
         metrics.safeRecordHeartbeat('queued', (Date.now() - startedAt) / 1000)
       } catch (queueError) {
         metrics.safeRecordHeartbeat('failed', (Date.now() - startedAt) / 1000)
@@ -266,12 +313,25 @@ export class HeartbeatService {
     logger.debug({ mediaId }, 'Current media updated')
   }
 
+  setActivePlayback(sceneId: string | undefined, activeSlots: ActiveSlotPlayback[]): void {
+    this.currentSceneId = sceneId
+    this.activeSlots = activeSlots
+    if (activeSlots.length > 0) {
+      this.currentMediaId = activeSlots[0]?.media_id ?? undefined
+    } else if (sceneId) {
+      this.currentMediaId = undefined
+    }
+    logger.debug({ sceneId, activeSlotCount: activeSlots.length }, 'Active scene playback updated')
+  }
+
   /**
    * Clear current schedule and media
    */
   clearCurrent(): void {
     this.currentScheduleId = undefined
     this.currentMediaId = undefined
+    this.currentSceneId = undefined
+    this.activeSlots = []
     logger.debug('Current schedule and media cleared')
   }
 

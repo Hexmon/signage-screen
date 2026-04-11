@@ -5,6 +5,7 @@ import { CommandType, PlayerState, type CacheStats, type SystemStats } from '../
 import { getCacheManager } from '../cache/cache-manager'
 import { getDeviceStateStore } from '../device-state-store'
 import { getRequestQueue } from '../network/request-queue'
+import { getProofOfPlayService } from '../pop-service'
 
 const logger = getLogger('player-metrics')
 
@@ -36,13 +37,15 @@ export type HeartbeatResult =
   | 'queued'
   | 'auth_failure'
   | 'skipped_unpaired'
+  | 'skipped_in_flight'
   | 'missing_device_id'
   | 'failed'
 
 export type CommandOutcome = 'success' | 'error' | 'deduplicated' | 'rate_limited'
 export type CommandSource = 'heartbeat' | 'poll'
-export type CommandAckResult = 'success' | 'queued' | 'auth_failure' | 'skipped_unpaired'
+export type CommandAckResult = 'success' | 'queued' | 'auth_failure' | 'skipped_unpaired' | 'failed'
 export type ScreenshotUploadResult = 'success' | 'queued' | 'auth_failure' | 'failed'
+export type CertificateValidationResult = 'x509_valid' | 'compatibility_accepted' | 'strict_rejected'
 
 type CounterMetric = {
   help: string
@@ -246,6 +249,8 @@ class SimplePrometheusRegistry {
 
 export class PlayerMetrics {
   private readonly registry = new SimplePrometheusRegistry()
+  private readonly requestQueueAdjustmentSnapshots = new Map<string, number>()
+  private readonly popReplayAdjustmentSnapshots = new Map<string, number>()
 
   constructor() {
     this.registry.createGauge('signhex_player_info', 'Static player runtime metadata', ['app_version', 'runtime_mode'])
@@ -256,16 +261,43 @@ export class PlayerMetrics {
       [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
       ['result']
     )
+    this.registry.createCounter(
+      'signhex_player_heartbeat_skips_total',
+      'Skipped player heartbeat runs by reason',
+      ['reason']
+    )
     this.registry.createGauge(
       'signhex_player_last_successful_heartbeat_unixtime',
       'Unix timestamp of the last successful player heartbeat'
     )
     this.registry.createGauge('signhex_player_request_queue_items', 'Queued request count by category', ['category'])
     this.registry.createGauge('signhex_player_request_queue_bytes', 'Queued request bytes by category', ['category'])
+    this.registry.createGauge('signhex_player_request_queue_budget_items', 'Request queue item budget by category', ['category'])
+    this.registry.createGauge('signhex_player_request_queue_budget_bytes', 'Request queue byte budget by category', ['category'])
     this.registry.createGauge(
       'signhex_player_request_queue_oldest_age_seconds',
       'Age of the oldest queued request in seconds by category',
       ['category']
+    )
+    this.registry.createCounter(
+      'signhex_player_request_queue_adjustments_total',
+      'Cumulative request queue drops and compactions by category.',
+      ['category', 'action']
+    )
+    this.registry.createGauge(
+      'signhex_player_pop_replay_backlog',
+      'Proof-of-play replay backlog by state.',
+      ['state']
+    )
+    this.registry.createGauge(
+      'signhex_player_pop_replay_budget',
+      'Proof-of-play replay budget by state.',
+      ['state']
+    )
+    this.registry.createCounter(
+      'signhex_player_pop_replay_adjustments_total',
+      'Cumulative proof-of-play replay drops and compactions.',
+      ['action']
     )
     this.registry.createGauge('signhex_player_cache_bytes', 'Player cache capacity and usage in bytes', ['state'])
     this.registry.createGauge('signhex_player_cache_entries', 'Player cache entry counts', ['state'])
@@ -281,6 +313,11 @@ export class PlayerMetrics {
     this.registry.createCounter('signhex_player_screenshot_upload_total', 'Player screenshot upload outcomes', [
       'result',
     ])
+    this.registry.createCounter(
+      'signhex_player_certificate_validation_total',
+      'Player certificate validation and compatibility outcomes',
+      ['result']
+    )
     this.registry.createGauge('signhex_player_last_schedule_sync_unixtime', 'Unix timestamp of the last schedule sync')
     this.registry.createCounter(
       'signhex_player_metrics_scrape_failures_total',
@@ -312,6 +349,9 @@ export class PlayerMetrics {
         { result },
         Math.max(durationSeconds, 0)
       )
+      if (result === 'skipped_in_flight') {
+        this.registry.incCounter('signhex_player_heartbeat_skips_total', { reason: 'in_flight' })
+      }
       if (result === 'success') {
         this.registry.setGauge('signhex_player_last_successful_heartbeat_unixtime', {}, Math.floor(Date.now() / 1000))
       }
@@ -357,6 +397,12 @@ export class PlayerMetrics {
     })
   }
 
+  recordCertificateValidation(result: CertificateValidationResult): void {
+    this.captureMetricError('certificate_validation', () => {
+      this.registry.incCounter('signhex_player_certificate_validation_total', { result })
+    })
+  }
+
   setLastScheduleSync(timestamp: Date | number | string = Date.now()): void {
     this.captureMetricError('schedule_sync', () => {
       const unixTime = this.toUnixSeconds(timestamp)
@@ -381,6 +427,10 @@ export class PlayerMetrics {
 
     await this.captureCollector('request_queue', () => {
       this.updateQueueStats()
+    })
+
+    await this.captureCollector('pop_replay', () => {
+      this.updateProofOfPlayReplayStats()
     })
 
     await this.captureCollector('device_state', () => {
@@ -451,25 +501,13 @@ export class PlayerMetrics {
   private updateQueueStats(): void {
     const requestQueue = getRequestQueue()
     const stats = requestQueue.getStats()
-    const now = Date.now()
-    const queue = requestQueue.getQueue()
-
-    const oldestAgeByCategory: Record<string, number> = {
-      all: 0,
-      heartbeat: 0,
-      screenshot: 0,
-      'command-ack': 0,
-      default: 0,
-    }
-
-    for (const entry of queue) {
-      const ageSeconds = Math.max(0, (now - entry.timestamp) / 1000)
-      oldestAgeByCategory['all'] = Math.max(oldestAgeByCategory['all'] || 0, ageSeconds)
-      oldestAgeByCategory[entry.category] = Math.max(oldestAgeByCategory[entry.category] || 0, ageSeconds)
-    }
+    const oldestAgeByCategory = requestQueue.getOldestAgeSeconds()
+    const budgets = requestQueue.getBudgetSnapshot()
 
     this.registry.setGauge('signhex_player_request_queue_items', { category: 'all' }, stats.pendingItems)
     this.registry.setGauge('signhex_player_request_queue_bytes', { category: 'all' }, stats.pendingBytes)
+    this.registry.setGauge('signhex_player_request_queue_budget_items', { category: 'all' }, budgets.totalMaxItems)
+    this.registry.setGauge('signhex_player_request_queue_budget_bytes', { category: 'all' }, budgets.totalMaxBytes)
 
     for (const category of Object.keys(stats.categories)) {
       const categoryKey = category as keyof typeof stats.categories
@@ -483,11 +521,93 @@ export class PlayerMetrics {
         { category },
         stats.categories[categoryKey].pendingBytes
       )
+      this.registry.setGauge(
+        'signhex_player_request_queue_budget_items',
+        { category },
+        budgets.categories[categoryKey].maxItems
+      )
+      this.registry.setGauge(
+        'signhex_player_request_queue_budget_bytes',
+        { category },
+        budgets.categories[categoryKey].maxBytes
+      )
+      this.syncAbsoluteCounter(
+        this.requestQueueAdjustmentSnapshots,
+        'signhex_player_request_queue_adjustments_total',
+        { category, action: 'dropped' },
+        stats.categories[categoryKey].dropped
+      )
+      this.syncAbsoluteCounter(
+        this.requestQueueAdjustmentSnapshots,
+        'signhex_player_request_queue_adjustments_total',
+        { category, action: 'compacted' },
+        stats.categories[categoryKey].compacted
+      )
     }
 
     for (const [category, oldestAge] of Object.entries(oldestAgeByCategory)) {
       this.registry.setGauge('signhex_player_request_queue_oldest_age_seconds', { category }, oldestAge)
     }
+  }
+
+  private updateProofOfPlayReplayStats(): void {
+    const proofOfPlayService = getProofOfPlayService()
+    const stats = proofOfPlayService.getReplayStats()
+    const budgets = proofOfPlayService.getReplayBudget()
+
+    this.registry.setGauge('signhex_player_pop_replay_backlog', { state: 'buffer_items' }, stats.bufferItems)
+    this.registry.setGauge('signhex_player_pop_replay_backlog', { state: 'buffer_bytes' }, stats.bufferBytes)
+    this.registry.setGauge('signhex_player_pop_replay_backlog', { state: 'spool_files' }, stats.spoolFiles)
+    this.registry.setGauge('signhex_player_pop_replay_backlog', { state: 'spool_bytes' }, stats.spoolBytes)
+
+    this.registry.setGauge('signhex_player_pop_replay_budget', { state: 'buffer_items' }, budgets.maxBufferEvents)
+    this.registry.setGauge('signhex_player_pop_replay_budget', { state: 'buffer_bytes' }, budgets.maxBufferBytes)
+    this.registry.setGauge('signhex_player_pop_replay_budget', { state: 'spool_files' }, budgets.maxSpoolFiles)
+    this.registry.setGauge('signhex_player_pop_replay_budget', { state: 'spool_bytes' }, budgets.maxSpoolBytes)
+    this.registry.setGauge(
+      'signhex_player_pop_replay_budget',
+      { state: 'max_events_per_file' },
+      budgets.maxSpoolEventsPerFile
+    )
+    this.registry.setGauge(
+      'signhex_player_pop_replay_budget',
+      { state: 'replay_batch_size' },
+      budgets.maxReplayBatchSize
+    )
+
+    this.syncAbsoluteCounter(
+      this.popReplayAdjustmentSnapshots,
+      'signhex_player_pop_replay_adjustments_total',
+      { action: 'dropped' },
+      stats.droppedEvents
+    )
+    this.syncAbsoluteCounter(
+      this.popReplayAdjustmentSnapshots,
+      'signhex_player_pop_replay_adjustments_total',
+      { action: 'compacted' },
+      stats.compactedEvents
+    )
+  }
+
+  private syncAbsoluteCounter(
+    snapshotStore: Map<string, number>,
+    metricName: string,
+    labels: LabelValues,
+    currentValue: number
+  ): void {
+    const key = JSON.stringify(labels)
+    const previousValue = snapshotStore.get(key) ?? 0
+    if (currentValue < previousValue) {
+      snapshotStore.set(key, currentValue)
+      return
+    }
+
+    const delta = currentValue - previousValue
+    if (delta > 0) {
+      this.registry.incCounter(metricName, labels, delta)
+    }
+
+    snapshotStore.set(key, currentValue)
   }
 
   private captureMetricError(context: string, fn: () => void): void {

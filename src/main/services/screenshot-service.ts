@@ -5,7 +5,7 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, nativeImage, NativeImage } from 'electron'
 import { getLogger } from '../../common/logger'
 import { getConfigManager } from '../../common/config'
 import { DeviceApiError, ScreenshotPolicyResponse } from '../../common/types'
@@ -18,6 +18,8 @@ import { atomicWrite, ensureDir, generateId } from '../../common/utils'
 import { getPlayerMetrics } from './telemetry/player-metrics'
 
 const logger = getLogger('screenshot-service')
+const MAX_SCREENSHOT_UPLOAD_REQUEST_BYTES = Math.floor(3.5 * 1024 * 1024)
+const SCREENSHOT_UPLOAD_URL = '/api/v1/device/screenshot'
 
 export class ScreenshotService {
   private mainWindow?: BrowserWindow
@@ -88,7 +90,7 @@ export class ScreenshotService {
   /**
    * Capture screenshot
    */
-  async capture(): Promise<Buffer> {
+  async capture(): Promise<NativeImage> {
     if (!this.mainWindow) {
       throw new Error('Screenshot service not initialized with main window')
     }
@@ -99,12 +101,9 @@ export class ScreenshotService {
       // Capture screenshot using Electron's native capture
       const image = await this.mainWindow.webContents.capturePage()
 
-      // Convert to PNG buffer
-      const buffer = image.toPNG()
+      logger.info({ size: image.toPNG().length }, 'Screenshot captured')
 
-      logger.info({ size: buffer.length }, 'Screenshot captured')
-
-      return buffer
+      return image
     } catch (error) {
       logger.error({ error }, 'Failed to capture screenshot')
       throw error
@@ -114,7 +113,7 @@ export class ScreenshotService {
   /**
    * Save screenshot to disk
    */
-  async saveScreenshot(buffer: Buffer): Promise<string> {
+  async saveScreenshot(image: NativeImage): Promise<string> {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
     const filename = `screenshot-${timestamp}-${generateId(8)}.png`
     const filepath = path.join(this.screenshotDir, filename)
@@ -122,6 +121,7 @@ export class ScreenshotService {
     logger.debug({ filepath }, 'Saving screenshot')
 
     try {
+      const buffer = image.toPNG()
       await atomicWrite(filepath, buffer)
       logger.info({ filepath, size: buffer.length }, 'Screenshot saved')
 
@@ -157,10 +157,15 @@ export class ScreenshotService {
     try {
       const httpClient = getHttpClient()
       const buffer = fs.readFileSync(filepath)
+      const preparedUpload = this.prepareUploadPayload(buffer, (candidateBuffer, mimeType) =>
+        this.estimateUploadRequestSize(deviceId, timestamp, candidateBuffer, mimeType) <=
+        MAX_SCREENSHOT_UPLOAD_REQUEST_BYTES
+      )
       const payload = {
         device_id: deviceId,
         timestamp,
-        image_data: buffer.toString('base64'),
+        image_data: preparedUpload.buffer.toString('base64'),
+        mime_type: preparedUpload.mimeType,
       }
 
       const response = await httpClient.post<{ success?: boolean; object_key?: string; timestamp?: string }>(
@@ -199,37 +204,56 @@ export class ScreenshotService {
         throw error
       }
 
-      logger.error({ error, filepath }, 'Failed to upload screenshot, queuing for retry')
+      const message = (error as Error).message || 'Screenshot upload failed'
+      const shouldQueue = !message.includes('exceeds upload size budget')
+      let queuedForRetry = false
 
-      // Queue payload for retry to avoid losing screenshots when offline
-      try {
-        const buffer = fs.readFileSync(filepath)
-        const requestQueue = getRequestQueue()
-        await requestQueue.enqueue({
-          method: 'POST',
-          url: '/api/v1/device/screenshot',
-          data: {
-            device_id: deviceId,
-            timestamp,
-            image_data: buffer.toString('base64'),
-          },
-          maxRetries: 3,
-        })
-        logger.info('Screenshot enqueued for retry')
-        metrics.recordScreenshotUpload('queued')
-      } catch (queueError) {
-        logger.error({ error: queueError }, 'Failed to enqueue screenshot for retry')
-        metrics.recordScreenshotUpload('failed')
-      } finally {
+      logger.error({ error, filepath, shouldQueue }, 'Failed to upload screenshot')
+
+      if (shouldQueue) {
         try {
-          fs.unlinkSync(filepath)
-        } catch {
-          // ignore cleanup errors
+          const requestQueue = getRequestQueue()
+          const queueBudgetBytes = requestQueue.getBudgetSnapshot().categories.screenshot.maxBytes
+          const preparedUpload = this.prepareUploadPayload(fs.readFileSync(filepath), (candidateBuffer, mimeType) =>
+            this.estimateQueuedRequestSize(deviceId, timestamp, candidateBuffer, mimeType) <= queueBudgetBytes
+          )
+          queuedForRetry = await requestQueue.enqueue({
+            method: 'POST',
+            url: SCREENSHOT_UPLOAD_URL,
+            data: {
+              device_id: deviceId,
+              timestamp,
+              image_data: preparedUpload.buffer.toString('base64'),
+              mime_type: preparedUpload.mimeType,
+            },
+            maxRetries: 3,
+          })
+
+          if (queuedForRetry) {
+            logger.info('Screenshot enqueued for retry')
+            metrics.recordScreenshotUpload('queued')
+          } else {
+            metrics.recordScreenshotUpload('failed')
+          }
+        } catch (queueError) {
+          logger.error({ error: queueError }, 'Failed to enqueue screenshot for retry')
+          metrics.recordScreenshotUpload('failed')
         }
+      } else {
+        metrics.recordScreenshotUpload('failed')
       }
 
-      const message = (error as Error).message || 'Screenshot upload failed; queued for retry'
-      throw new Error(`Screenshot upload failed; queued for retry: ${message}`)
+      try {
+        fs.unlinkSync(filepath)
+      } catch {
+        // ignore cleanup errors
+      }
+
+      if (queuedForRetry) {
+        throw new Error(`Screenshot upload failed; queued for retry: ${message}`)
+      }
+
+      throw new Error(message)
     }
   }
 
@@ -241,10 +265,10 @@ export class ScreenshotService {
 
     try {
       // Capture screenshot
-      const buffer = await this.capture()
+      const image = await this.capture()
 
       // Save to disk
-      const filepath = await this.saveScreenshot(buffer)
+      const filepath = await this.saveScreenshot(image)
 
       // Upload to backend
       const objectKey = await this.uploadScreenshot(filepath)
@@ -313,6 +337,85 @@ export class ScreenshotService {
       logger.error({ error }, 'Failed to list local screenshots')
       return []
     }
+  }
+
+  private prepareUploadPayload(
+    buffer: Buffer,
+    fitsCandidate: (candidateBuffer: Buffer, mimeType: 'image/jpeg' | 'image/png') => boolean = (candidate) =>
+      candidate.length <= MAX_SCREENSHOT_UPLOAD_REQUEST_BYTES
+  ): { buffer: Buffer; mimeType: 'image/jpeg' | 'image/png' } {
+    if (fitsCandidate(buffer, 'image/png')) {
+      return { buffer, mimeType: 'image/png' }
+    }
+
+    const image = nativeImage.createFromBuffer(buffer)
+    const originalSize = image.getSize()
+    const scaleSteps = [1, 0.85, 0.7, 0.55, 0.4]
+    const qualitySteps = [82, 72, 62, 52, 42]
+
+    for (const scale of scaleSteps) {
+      const width = Math.max(1, Math.round(originalSize.width * scale))
+      const height = Math.max(1, Math.round(originalSize.height * scale))
+      const candidate = scale === 1 ? image : image.resize({ width, height, quality: 'best' })
+
+      for (const quality of qualitySteps) {
+        const jpegBuffer = candidate.toJPEG(quality)
+        if (fitsCandidate(jpegBuffer, 'image/jpeg')) {
+          logger.info(
+            {
+              originalBytes: buffer.length,
+              resizedBytes: jpegBuffer.length,
+              width,
+              height,
+              quality,
+            },
+            'Compressed screenshot for upload'
+          )
+          return { buffer: jpegBuffer, mimeType: 'image/jpeg' }
+        }
+      }
+    }
+
+    throw new Error('Screenshot exceeds upload size budget even after compression')
+  }
+
+  private estimateUploadRequestSize(
+    deviceId: string,
+    timestamp: string,
+    buffer: Buffer,
+    mimeType: 'image/jpeg' | 'image/png'
+  ): number {
+    return Buffer.byteLength(
+      JSON.stringify({
+        device_id: deviceId,
+        timestamp,
+        image_data: buffer.toString('base64'),
+        mime_type: mimeType,
+      }),
+      'utf8'
+    )
+  }
+
+  private estimateQueuedRequestSize(
+    deviceId: string,
+    timestamp: string,
+    buffer: Buffer,
+    mimeType: 'image/jpeg' | 'image/png'
+  ): number {
+    return Buffer.byteLength(
+      JSON.stringify({
+        method: 'POST',
+        url: SCREENSHOT_UPLOAD_URL,
+        data: {
+          device_id: deviceId,
+          timestamp,
+          image_data: buffer.toString('base64'),
+          mime_type: mimeType,
+        },
+        headers: null,
+      }),
+      'utf8'
+    )
   }
 }
 

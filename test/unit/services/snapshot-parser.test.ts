@@ -114,6 +114,25 @@ describe('Snapshot Parser', () => {
     expect(parsed.defaultItem?.remoteUrl).to.equal('https://cdn.example.com/default.jpg')
   })
 
+  it('should parse wrapped no-content responses with explicit content state and server time', () => {
+    const raw = {
+      device_id: 'device-1',
+      content_state: 'empty',
+      server_time: '2026-04-11T10:00:00.000Z',
+      snapshot: null,
+      default_media: null,
+      emergency: null,
+    }
+
+    const parsed = parseSnapshotResponse(raw)
+
+    expect(parsed.contentState).to.equal('empty')
+    expect(parsed.serverTime).to.equal('2026-04-11T10:00:00.000Z')
+    expect(parsed.items).to.deep.equal([])
+    expect(parsed.scheduleWindows).to.deep.equal([])
+    expect(parsed.defaultItem).to.equal(undefined)
+  })
+
   it('should prefer live webpage URLs while keeping fallback preview metadata', () => {
     const raw = {
       id: 'snap-webpage-default',

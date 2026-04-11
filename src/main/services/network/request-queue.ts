@@ -6,45 +6,23 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { getLogger } from '../../../common/logger'
 import { getConfigManager } from '../../../common/config'
-import { DeviceApiError } from '../../../common/types'
+import {
+  DeviceApiError,
+  type RequestQueueBudget,
+  type RequestQueueBudgetSnapshot,
+  type RequestQueueCategory,
+  type RequestQueueOldestAgeSeconds,
+  type RequestQueueStats,
+} from '../../../common/types'
 import { ExponentialBackoff, atomicWrite, ensureDir, sleep } from '../../../common/utils'
 import { getHttpClient } from './http-client'
 import { getLifecycleEvents } from '../lifecycle-events'
+import {
+  REQUEST_QUEUE_TOTAL_MAX_ITEMS,
+  deriveRequestQueueMaxBytes,
+} from '../offline-replay-budgets'
 
 const logger = getLogger('request-queue')
-
-type RequestCategory = 'heartbeat' | 'screenshot' | 'command-ack' | 'default'
-
-type QueueBudget = {
-  maxItems: number
-  maxBytes: number
-  replayBatchSize: number
-  replayDelayMs: [number, number]
-}
-
-type QueueCategoryStats = Record<
-  RequestCategory,
-  {
-    pendingItems: number
-    pendingBytes: number
-    dropped: number
-    compacted: number
-  }
->
-
-export interface RequestQueueStats {
-  pendingItems: number
-  pendingBytes: number
-  dropped: number
-  droppedBytes: number
-  compacted: number
-  compactedBytes: number
-  lastDropReason?: string
-  lastDropAt?: string
-  lastCompactionReason?: string
-  lastCompactionAt?: string
-  categories: QueueCategoryStats
-}
 
 export interface QueuedRequest {
   id: string
@@ -56,22 +34,15 @@ export interface QueuedRequest {
   retries: number
   maxRetries: number
   sizeBytes: number
-  category: RequestCategory
+  category: RequestQueueCategory
   nextAttemptAt?: number
   lastError?: string
 }
 
-const TOTAL_MAX_ITEMS = 256
-const TOTAL_MAX_BYTES_MIN = 512 * 1024
-const TOTAL_MAX_BYTES_MAX = 8 * 1024 * 1024
 const IDLE_FLUSH_MS = 60000
 const BACKLOG_FLUSH_MS = 15000
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value))
-}
-
-function emptyCategoryStats(): QueueCategoryStats {
+function emptyCategoryStats(): RequestQueueStats['categories'] {
   return {
     heartbeat: { pendingItems: 0, pendingBytes: 0, dropped: 0, compacted: 0 },
     screenshot: { pendingItems: 0, pendingBytes: 0, dropped: 0, compacted: 0 },
@@ -85,7 +56,7 @@ export class RequestQueue {
   private readonly queuePath: string
   private readonly statePath: string
   private readonly totalMaxBytes: number
-  private readonly categoryBudgets: Record<RequestCategory, QueueBudget>
+  private readonly categoryBudgets: Record<RequestQueueCategory, RequestQueueBudget>
   private flushTimer?: NodeJS.Timeout
   private isFlushing = false
   private stats: RequestQueueStats = {
@@ -104,7 +75,7 @@ export class RequestQueue {
     this.statePath = path.join(config.cache.path, 'request-queue.state.json')
     ensureDir(path.dirname(this.queuePath), 0o755)
 
-    this.totalMaxBytes = clamp(Math.round(config.cache.maxBytes * 0.01), TOTAL_MAX_BYTES_MIN, TOTAL_MAX_BYTES_MAX)
+    this.totalMaxBytes = deriveRequestQueueMaxBytes(config.cache.maxBytes)
     this.categoryBudgets = this.buildCategoryBudgets(this.totalMaxBytes)
 
     this.loadState()
@@ -122,7 +93,7 @@ export class RequestQueue {
     )
   }
 
-  private buildCategoryBudgets(totalMaxBytes: number): Record<RequestCategory, QueueBudget> {
+  private buildCategoryBudgets(totalMaxBytes: number): Record<RequestQueueCategory, RequestQueueBudget> {
     return {
       heartbeat: {
         maxItems: 24,
@@ -244,7 +215,7 @@ export class RequestQueue {
     )
   }
 
-  private classifyRequest(url: string): RequestCategory {
+  private classifyRequest(url: string): RequestQueueCategory {
     if (url === '/api/v1/device/heartbeat') {
       return 'heartbeat'
     }
@@ -278,7 +249,7 @@ export class RequestQueue {
       categories[request.category].compacted = this.stats.categories[request.category].compacted
     }
 
-    for (const category of Object.keys(categories) as RequestCategory[]) {
+    for (const category of Object.keys(categories) as RequestQueueCategory[]) {
       categories[category].dropped = this.stats.categories[category].dropped
       categories[category].compacted = this.stats.categories[category].compacted
     }
@@ -352,7 +323,7 @@ export class RequestQueue {
         .reduce((total, request) => total + request.sizeBytes, 0) +
         incoming.sizeBytes >
         categoryBudget.maxBytes ||
-      this.queue.length >= TOTAL_MAX_ITEMS ||
+      this.queue.length >= REQUEST_QUEUE_TOTAL_MAX_ITEMS ||
       this.queue.reduce((total, request) => total + request.sizeBytes, 0) + incoming.sizeBytes > this.totalMaxBytes
     ) {
       let targetIndex = -1
@@ -372,7 +343,7 @@ export class RequestQueue {
       }
 
       if (targetIndex === -1) {
-        const evictionOrder: RequestCategory[] = ['heartbeat', 'screenshot', 'default', 'command-ack']
+        const evictionOrder: RequestQueueCategory[] = ['heartbeat', 'screenshot', 'default', 'command-ack']
         for (const category of evictionOrder) {
           targetIndex = this.findOldestIndex((request) => request.category === category)
           if (targetIndex !== -1) {
@@ -440,7 +411,7 @@ export class RequestQueue {
     }, delay)
   }
 
-  async enqueue(request: Omit<QueuedRequest, 'id' | 'timestamp' | 'retries' | 'sizeBytes' | 'category'>): Promise<void> {
+  async enqueue(request: Omit<QueuedRequest, 'id' | 'timestamp' | 'retries' | 'sizeBytes' | 'category'>): Promise<boolean> {
     const queuedRequest: QueuedRequest = {
       ...request,
       id: `req_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
@@ -453,7 +424,16 @@ export class RequestQueue {
 
     if (!this.evictForIncoming(queuedRequest)) {
       await this.persist()
-      return
+      logger.warn(
+        {
+          method: queuedRequest.method,
+          url: queuedRequest.url,
+          category: queuedRequest.category,
+          sizeBytes: queuedRequest.sizeBytes,
+        },
+        'Request queue rejected incoming payload'
+      )
+      return false
     }
 
     this.queue.push(queuedRequest)
@@ -471,11 +451,13 @@ export class RequestQueue {
       },
       'Request queued'
     )
+
+    return true
   }
 
   private selectReplayBatch(now: number): QueuedRequest[] {
     const batch: QueuedRequest[] = []
-    const selectedByCategory: Record<RequestCategory, number> = {
+    const selectedByCategory: Record<RequestQueueCategory, number> = {
       heartbeat: 0,
       screenshot: 0,
       'command-ack': 0,
@@ -611,6 +593,33 @@ export class RequestQueue {
 
   getStats(): RequestQueueStats {
     return JSON.parse(JSON.stringify(this.stats))
+  }
+
+  getBudgetSnapshot(): RequestQueueBudgetSnapshot {
+    return {
+      totalMaxItems: REQUEST_QUEUE_TOTAL_MAX_ITEMS,
+      totalMaxBytes: this.totalMaxBytes,
+      categories: JSON.parse(JSON.stringify(this.categoryBudgets)),
+    }
+  }
+
+  getOldestAgeSeconds(): RequestQueueOldestAgeSeconds {
+    const oldestAgeByCategory: RequestQueueOldestAgeSeconds = {
+      all: 0,
+      heartbeat: 0,
+      screenshot: 0,
+      'command-ack': 0,
+      default: 0,
+    }
+
+    const now = Date.now()
+    for (const entry of this.queue) {
+      const ageSeconds = Math.max(0, (now - entry.timestamp) / 1000)
+      oldestAgeByCategory.all = Math.max(oldestAgeByCategory.all, ageSeconds)
+      oldestAgeByCategory[entry.category] = Math.max(oldestAgeByCategory[entry.category], ageSeconds)
+    }
+
+    return oldestAgeByCategory
   }
 
   async clear(): Promise<void> {

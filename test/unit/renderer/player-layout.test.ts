@@ -3,7 +3,7 @@ const sinon = require('sinon')
 
 describe('Player layout helpers', () => {
   it('computes a centered letterboxed frame for 16:9 content on a tall viewport', async () => {
-    const { computeSceneStageFrame } = await import('../../../src/renderer/player.ts')
+    const { computeSceneStageFrame } = require('../../../src/renderer/player.ts')
 
     const frame = computeSceneStageFrame('16:9', 1080, 1920)
 
@@ -14,7 +14,7 @@ describe('Player layout helpers', () => {
   })
 
   it('computes a centered pillarboxed frame for 9:16 content on a wide viewport', async () => {
-    const { computeSceneStageFrame } = await import('../../../src/renderer/player.ts')
+    const { computeSceneStageFrame } = require('../../../src/renderer/player.ts')
 
     const frame = computeSceneStageFrame('9:16', 1920, 1080)
 
@@ -25,7 +25,7 @@ describe('Player layout helpers', () => {
   })
 
   it('switches to default content when player status mode is default', async () => {
-    const { resolvePlayerContentSource } = await import('../../../src/renderer/player.ts')
+    const { resolvePlayerContentSource } = require('../../../src/renderer/player.ts')
 
     const source = resolvePlayerContentSource({
       state: 'PAIRED_RUNTIME',
@@ -37,7 +37,7 @@ describe('Player layout helpers', () => {
   })
 
   it('keeps schedule content active when scheduled playback is selected before current item metadata arrives', async () => {
-    const { resolvePlayerContentSource } = await import('../../../src/renderer/player.ts')
+    const { resolvePlayerContentSource } = require('../../../src/renderer/player.ts')
 
     const source = resolvePlayerContentSource({
       state: 'PAIRED_RUNTIME',
@@ -49,7 +49,7 @@ describe('Player layout helpers', () => {
   })
 
   it('uses manual replay for loop-enabled scheduled videos', async () => {
-    const { shouldUseManualVideoReplay } = await import('../../../src/renderer/player.ts')
+    const { shouldUseManualVideoReplay } = require('../../../src/renderer/player.ts')
 
     expect(
       shouldUseManualVideoReplay({
@@ -77,7 +77,7 @@ describe('Player layout helpers', () => {
   })
 
   it('recursively tears down scheduled media trees', async () => {
-    const { teardownScheduledElementTree } = await import('../../../src/renderer/player.ts')
+    const { teardownScheduledElementTree } = require('../../../src/renderer/player.ts')
 
     const videoParent = { removeChild: sinon.spy() }
     const iframeParent = { removeChild: sinon.spy() }

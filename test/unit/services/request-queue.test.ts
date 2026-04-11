@@ -88,6 +88,16 @@ describe('Request Queue', () => {
     expect(stats.pendingBytes).to.be.at.most(256 * 1024)
     expect(stats.compacted).to.be.greaterThan(0)
     expect(stats.lastCompactionReason).to.be.a('string')
+
+    const budgets = requestQueue.getBudgetSnapshot()
+    const oldestAges = requestQueue.getOldestAgeSeconds()
+
+    expect(budgets.totalMaxItems).to.equal(256)
+    expect(budgets.totalMaxBytes).to.equal(512 * 1024)
+    expect(budgets.categories.heartbeat.maxItems).to.equal(24)
+    expect(budgets.categories.screenshot.maxBytes).to.equal(512 * 1024)
+    expect(oldestAges.all).to.be.greaterThanOrEqual(0)
+    expect(oldestAges.heartbeat).to.be.greaterThanOrEqual(0)
   })
 
   it('replays queued requests in paced endpoint-aware batches', async () => {
@@ -125,5 +135,22 @@ describe('Request Queue', () => {
 
     expect(postStub.callCount).to.equal(5)
     expect(requestQueue.getSize()).to.equal(8)
+  })
+
+  it('returns false when an incoming request cannot fit within queue budgets', async () => {
+    const { getRequestQueue } = require('../../../src/main/services/network/request-queue')
+    const requestQueue = getRequestQueue()
+
+    const accepted = await requestQueue.enqueue({
+      method: 'POST',
+      url: '/api/v1/device/screenshot',
+      data: {
+        image_data: 'x'.repeat(700 * 1024),
+      },
+      maxRetries: 3,
+    })
+
+    expect(accepted).to.equal(false)
+    expect(requestQueue.getSize()).to.equal(0)
   })
 })

@@ -227,9 +227,13 @@ describe('Proof-of-Play Service', () => {
       await sleep(25)
 
       const stats = popService.getReplayStats()
+      const budgets = popService.getReplayBudget()
       expect(stats.bufferItems).to.be.at.most(100)
       expect(stats.compactedEvents).to.be.greaterThan(0)
       expect(stats.spoolFiles).to.be.greaterThan(0)
+      expect(budgets.maxBufferEvents).to.equal(100)
+      expect(budgets.maxReplayBatchSize).to.equal(25)
+      expect(budgets.maxSpoolFiles).to.equal(32)
     })
 
     it('should pace replay by draining only one bounded batch at a time', async () => {

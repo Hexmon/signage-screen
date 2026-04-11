@@ -13,6 +13,8 @@ import { getPairingService } from './pairing-service'
 import { getTelemetryService } from './telemetry/telemetry-service'
 
 const logger = getLogger('schedule-manager')
+const LEGACY_RUNTIME_PATH_ERROR =
+  'Legacy schedule-manager runtime path is disabled. Use snapshot-manager + heartbeat/command runtime flow instead.'
 
 export class ScheduleManager extends EventEmitter {
   private currentSchedule?: ScheduleSnapshot
@@ -25,6 +27,9 @@ export class ScheduleManager extends EventEmitter {
 
   constructor() {
     super()
+    if (process.env['NODE_ENV'] !== 'test') {
+      throw new Error(LEGACY_RUNTIME_PATH_ERROR)
+    }
     this.setupWebSocketListeners()
   }
 

@@ -14,7 +14,7 @@ import * as path from 'path'
 import { getConfigManager } from '../common/config'
 import { getLogger } from '../common/logger'
 import { ExponentialBackoff } from '../common/utils'
-import type { AppConfig, PlayerStatus } from '../common/types'
+import type { ActiveSlotPlayback, AppConfig, PlayerStatus } from '../common/types'
 import { parseOperatorCommand, runOperatorCommand } from './cli'
 import { getRuntimeMode, getRuntimeWindowPolicy } from './runtime-mode'
 import { ensureAutostartRegistration } from './services/autostart'
@@ -52,6 +52,7 @@ const restartBackoff = new ExponentialBackoff(1000, 60000, 10)
 const WEBPAGE_PARTITION = 'persist:hexmon-webpage-playback'
 let lastBlockedInputLogAt = 0
 let startupConfigError: string | null = null
+let lastReportedActiveSlots = new Map<string, ActiveSlotPlayback>()
 
 function buildStartupConfigStatus(): PlayerStatus {
   return {
@@ -555,6 +556,49 @@ function setupIPCHandlers(): void {
     }
   })
 
+  ipcMain.on('player-active-playback', async (_event: any, payload: { sceneId?: string; activeSlots?: ActiveSlotPlayback[] }) => {
+    try {
+      const { getTelemetryService } = await import('./services/telemetry/telemetry-service.js')
+      const { getProofOfPlayService } = await import('./services/pop-service.js')
+      const { getCacheManager } = await import('./services/cache/cache-manager.js')
+
+      const sceneId = typeof payload?.sceneId === 'string' ? payload.sceneId : undefined
+      const activeSlots = Array.isArray(payload?.activeSlots) ? payload.activeSlots : []
+      const nextSlots = new Map(activeSlots.map((slot) => [slot.playback_instance_id, slot]))
+
+      const popService = getProofOfPlayService()
+      for (const playbackInstanceId of lastReportedActiveSlots.keys()) {
+        if (!nextSlots.has(playbackInstanceId)) {
+          popService.recordEnd(playbackInstanceId, true)
+        }
+      }
+
+      for (const [playbackInstanceId, slot] of nextSlots.entries()) {
+        if (lastReportedActiveSlots.has(playbackInstanceId)) {
+          continue
+        }
+        if (!slot.schedule_id || !slot.media_id) {
+          continue
+        }
+        popService.recordStart({
+          scheduleId: slot.schedule_id,
+          mediaId: slot.media_id,
+          playbackInstanceId,
+          sceneId: slot.scene_id,
+          slotId: slot.slot_id,
+          itemId: slot.item_id,
+          startedAt: slot.started_at,
+        })
+      }
+
+      lastReportedActiveSlots = nextSlots
+      getTelemetryService().setActivePlayback(sceneId, activeSlots)
+      getCacheManager().replaceNowPlaying(activeSlots.map((slot) => slot.media_id).filter((mediaId): mediaId is string => Boolean(mediaId)))
+    } catch (error) {
+      logger.warn({ error }, 'Failed to process active playback update from renderer')
+    }
+  })
+
   // Renderer logging
   ipcMain.on('renderer-log', (_event: any, { level, message, data }: any) => {
     const rendererLogger = getLogger('renderer')
@@ -579,6 +623,10 @@ async function cleanup(): Promise<void> {
     await playerFlow.stop()
 
     const popService = getProofOfPlayService()
+    for (const playbackInstanceId of lastReportedActiveSlots.keys()) {
+      popService.recordEnd(playbackInstanceId, false)
+    }
+    lastReportedActiveSlots = new Map()
     await popService.cleanup()
 
     const cacheManager = getCacheManager()

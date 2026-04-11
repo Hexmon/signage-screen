@@ -111,10 +111,12 @@ export class DeviceStateStore {
     })
   }
 
-  async recordCommandSeen(commandId: string, source: 'heartbeat' | 'poll'): Promise<void> {
+  async recordCommandSeen(commandId: string, source: 'heartbeat' | 'poll', deliveryToken?: string): Promise<void> {
     const now = new Date().toISOString()
     const current = this.state.recentCommands || []
-    const existingIndex = current.findIndex((entry) => entry.id === commandId)
+    const existingIndex = current.findIndex(
+      (entry) => entry.id === commandId && (entry.deliveryToken || '') === (deliveryToken || '')
+    )
     let next: RecentCommandRecord[]
 
     if (existingIndex >= 0) {
@@ -122,6 +124,7 @@ export class DeviceStateStore {
         index === existingIndex
           ? {
               ...entry,
+              deliveryToken: deliveryToken || entry.deliveryToken,
               lastSeenAt: now,
               source,
             }
@@ -132,6 +135,7 @@ export class DeviceStateStore {
         ...current,
         {
           id: commandId,
+          deliveryToken,
           firstSeenAt: now,
           lastSeenAt: now,
           source,
@@ -144,10 +148,10 @@ export class DeviceStateStore {
     })
   }
 
-  async recordCommandAcknowledged(commandId: string): Promise<void> {
+  async recordCommandAcknowledged(commandId: string, deliveryToken?: string): Promise<void> {
     const now = new Date().toISOString()
     const next = (this.state.recentCommands || []).map((entry) =>
-      entry.id === commandId
+      entry.id === commandId && ((entry.deliveryToken || '') === (deliveryToken || '') || !deliveryToken)
         ? {
             ...entry,
             acknowledgedAt: now,
@@ -161,8 +165,19 @@ export class DeviceStateStore {
     })
   }
 
-  hasRecentCommand(commandId: string): boolean {
-    return (this.state.recentCommands || []).some((entry) => entry.id === commandId)
+  hasRecentCommand(commandId: string, deliveryToken?: string): boolean {
+    return (this.state.recentCommands || []).some((entry) => {
+      if (entry.id !== commandId) {
+        return false
+      }
+      if (entry.acknowledgedAt) {
+        return true
+      }
+      if (!deliveryToken) {
+        return true
+      }
+      return entry.deliveryToken === deliveryToken
+    })
   }
 
   getIdentitySnapshot(paths: { key: string; cert: string; ca: string }): IdentitySnapshot {

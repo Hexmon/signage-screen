@@ -3,7 +3,7 @@
  * Handles media rendering and transitions in the renderer process
  */
 
-import { DefaultMediaResponse, FitMode, LayoutScene, LayoutSceneSlot, PlayerStatus, TimelineItem } from '../common/types'
+import { ActiveSlotPlayback, DefaultMediaResponse, FitMode, LayoutScene, LayoutSceneSlot, PlayerStatus, TimelineItem } from '../common/types'
 import './types'
 import { DefaultMediaPlayer } from './default-media-player'
 import { checkMediaCompatibility, CompatResult } from '../common/media-compat'
@@ -104,6 +104,12 @@ type RenderedScene = {
   cleanup: () => void
 }
 
+type PendingTransition = {
+  currentId: string
+  nextId: string
+  durationMs: number
+}
+
 function teardownDisposableNode(node: DisposableMediaNode | null | undefined): void {
   if (!node) {
     return
@@ -192,6 +198,9 @@ class Player {
   private currentCleanup?: () => void
   private playbackSession = 0
   private ignoreFallbackStatusUntil = 0
+  private pendingTransition?: PendingTransition
+  private activeSceneId?: string
+  private activeSlotPlaybacks = new Map<string, ActiveSlotPlayback>()
 
   constructor() {
     this.initializeElements()
@@ -375,6 +384,9 @@ class Player {
   private async playMedia(item: TimelineItem): Promise<void> {
     const sessionId = ++this.playbackSession
     this.log('info', 'Playing media', { itemId: item.id, type: item.type })
+    const transitionDurationMs =
+      this.pendingTransition?.nextId === item.id ? this.pendingTransition.durationMs : undefined
+    this.pendingTransition = undefined
 
     try {
       if (item.type === 'scene') {
@@ -383,16 +395,23 @@ class Player {
           throw new Error('Scene definition missing from scheduled layout item')
         }
 
+        this.activeSceneId = item.id
+        this.activeSlotPlaybacks.clear()
+        this.reportActivePlayback()
         const renderedScene = this.renderScene(item, scene)
         const element = renderedScene.element
         if (sessionId !== this.playbackSession) {
           this.disposeScheduledElement(element)
           return
         }
-        this.showElement(element, renderedScene.cleanup)
+        this.showElement(element, renderedScene.cleanup, transitionDurationMs)
         this.currentElement = element
         return
       }
+
+      this.activeSceneId = undefined
+      this.activeSlotPlaybacks.clear()
+      this.reportActivePlayback()
 
       const compat = this.getItemCompatibility(item)
 
@@ -439,7 +458,7 @@ class Player {
       }
 
       // Show element
-      this.showElement(element)
+      this.showElement(element, undefined, transitionDurationMs)
 
       this.currentElement = element
     } catch (error) {
@@ -609,7 +628,16 @@ class Player {
       this.applySlotBounds(slotContainer, slot)
 
       stage.appendChild(slotContainer)
-      cleanupCallbacks.push(this.mountSceneSlot(slotContainer, slot, scene.startsAt))
+      cleanupCallbacks.push(
+        this.mountSceneSlot(
+          slotContainer,
+          slot,
+          sceneItem.id,
+          scene.startsAt,
+          typeof sceneItem.meta?.['scheduleId'] === 'string' ? String(sceneItem.meta?.['scheduleId']) : undefined,
+          scene.serverTimeOffsetMs || 0,
+        )
+      )
     })
 
     const cleanup = () => {
@@ -684,7 +712,7 @@ class Player {
   /**
    * Show element with fade in
    */
-  private showElement(element: HTMLElement, nextCleanup?: () => void): void {
+  private showElement(element: HTMLElement, nextCleanup?: () => void, fadeMs: number = 500): void {
     if (!this.mediaContainer) return
 
     this.runCurrentCleanup()
@@ -697,7 +725,7 @@ class Player {
         if (this.mediaContainer && previous.parentElement === this.mediaContainer) {
           this.disposeScheduledElement(previous)
         }
-      }, 500)
+      }, Math.max(0, fadeMs))
     }
 
     // Add and show new element
@@ -712,11 +740,11 @@ class Player {
    */
   private startTransition(current: TimelineItem, next: TimelineItem, durationMs: number): void {
     this.log('debug', 'Starting transition', { currentId: current.id, nextId: next.id, durationMs })
-
-    // Preload next item
-    this.playMedia(next).catch((error) => {
-      this.log('error', 'Failed to preload next item', { error: error.message })
-    })
+    this.pendingTransition = {
+      currentId: current.id,
+      nextId: next.id,
+      durationMs: Math.max(0, durationMs),
+    }
   }
 
   /**
@@ -847,16 +875,21 @@ class Player {
     return '0%'
   }
 
-  private mountSceneSlot(container: HTMLElement, slot: LayoutSceneSlot, sceneStartsAt?: string): () => void {
+  private mountSceneSlot(
+    container: HTMLElement,
+    slot: LayoutSceneSlot,
+    sceneId: string,
+    sceneStartsAt?: string,
+    scheduleId?: string,
+    serverTimeOffsetMs: number = 0,
+  ): () => void {
     const timers = new Set<number>()
     let disposed = false
     let activeElement: HTMLElement | undefined
 
     const totalDurationMs = slot.items.reduce((sum, item) => sum + Math.max(1, item.displayMs), 0)
-    const elapsedSinceSceneStart = sceneStartsAt ? Math.max(0, Date.now() - Date.parse(sceneStartsAt)) : 0
-    const cycleOffset = totalDurationMs > 0 ? elapsedSinceSceneStart % totalDurationMs : 0
 
-    const resolveInitialPosition = (): { index: number; remainingMs: number } => {
+    const resolveScenePosition = (): { index: number; remainingMs: number } => {
       if (slot.items.length === 0) {
         return { index: 0, remainingMs: 1000 }
       }
@@ -864,6 +897,11 @@ class Player {
       if (totalDurationMs <= 0) {
         return { index: 0, remainingMs: slot.items[0]?.displayMs || 1000 }
       }
+
+      const elapsedSinceSceneStart = sceneStartsAt
+        ? Math.max(0, Date.now() + serverTimeOffsetMs - Date.parse(sceneStartsAt))
+        : 0
+      const cycleOffset = elapsedSinceSceneStart % totalDurationMs
 
       let consumed = 0
       for (let index = 0; index < slot.items.length; index += 1) {
@@ -951,10 +989,20 @@ class Player {
         }
 
         activeElement = nextElement
+        this.setActiveSlotPlayback(slot.id, {
+          scene_id: sceneId,
+          slot_id: slot.id,
+          item_id: item.id,
+          media_id: item.mediaId || item.objectKey || null,
+          schedule_id: scheduleId || null,
+          playback_instance_id: globalThis.crypto.randomUUID(),
+          started_at: new Date(Date.now() + serverTimeOffsetMs).toISOString(),
+        })
         const delayMs = delayOverrideMs ?? Math.max(250, item.displayMs)
         const timer = window.setTimeout(() => {
           timers.delete(timer)
-          void showSlotItem(normalizedIndex + 1)
+          const nextPosition = resolveScenePosition()
+          void showSlotItem(nextPosition.index, nextPosition.remainingMs)
         }, delayMs)
         timers.add(timer)
       } catch (error) {
@@ -971,14 +1019,23 @@ class Player {
         }
         container.appendChild(placeholder)
         activeElement = placeholder
+        this.clearActiveSlotPlayback(slot.id)
+        const delayMs = delayOverrideMs ?? Math.max(250, item.displayMs)
+        const timer = window.setTimeout(() => {
+          timers.delete(timer)
+          const nextPosition = resolveScenePosition()
+          void showSlotItem(nextPosition.index, nextPosition.remainingMs)
+        }, delayMs)
+        timers.add(timer)
       }
     }
 
-    const initialPosition = resolveInitialPosition()
+    const initialPosition = resolveScenePosition()
     void showSlotItem(initialPosition.index, initialPosition.remainingMs)
 
     return () => {
       disposed = true
+      this.clearActiveSlotPlayback(slot.id)
       timers.forEach((timer) => window.clearTimeout(timer))
       timers.clear()
 
@@ -999,6 +1056,10 @@ class Player {
 
   private clearScheduledPlayback(reason: string): void {
     this.playbackSession += 1
+    this.pendingTransition = undefined
+    this.activeSceneId = undefined
+    this.activeSlotPlaybacks.clear()
+    this.reportActivePlayback()
     this.runCurrentCleanup()
 
     if (this.mediaContainer) {
@@ -1009,6 +1070,26 @@ class Player {
 
     this.currentElement = undefined
     this.log('debug', 'Cleared scheduled playback', { reason })
+  }
+
+  private reportActivePlayback(): void {
+    window.hexmon?.reportActivePlayback?.({
+      sceneId: this.activeSceneId,
+      activeSlots: Array.from(this.activeSlotPlaybacks.values()),
+    })
+  }
+
+  private setActiveSlotPlayback(slotId: string, playback: ActiveSlotPlayback): void {
+    this.activeSlotPlaybacks.set(slotId, playback)
+    this.reportActivePlayback()
+  }
+
+  private clearActiveSlotPlayback(slotId: string): void {
+    if (!this.activeSlotPlaybacks.has(slotId)) {
+      return
+    }
+    this.activeSlotPlaybacks.delete(slotId)
+    this.reportActivePlayback()
   }
 
   private runCurrentCleanup(): void {

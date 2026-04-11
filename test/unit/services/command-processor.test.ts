@@ -239,6 +239,28 @@ describe('Command Processor', () => {
     expect(getConfigManager().getConfig().intervals.screenshotMs).to.equal(originalInterval)
   })
 
+  it('should reject screenshot interval commands that omit the enabled flag', async () => {
+    const { getCommandProcessor } = require('../../../src/main/services/command-processor')
+    const { getScreenshotService } = require('../../../src/main/services/screenshot-service')
+
+    const commandProcessor = getCommandProcessor()
+    const screenshotService = getScreenshotService()
+    const applyPolicySpy = sandbox.spy(screenshotService, 'applyPolicy')
+
+    const result = await commandProcessor.handleSetScreenshotInterval({
+      id: 'cmd-missing-enabled',
+      type: 'SET_SCREENSHOT_INTERVAL',
+      params: {
+        interval_seconds: 30,
+      },
+    })
+
+    expect(result.success).to.equal(false)
+    expect(result.error).to.contain('enabled')
+    expect(applyPolicySpy.called).to.equal(false)
+    expect(screenshotService.isCaptureEnabled()).to.equal(false)
+  })
+
   it('should keep /commands polling active while heartbeat is still healthy', async () => {
     const clock = sandbox.useFakeTimers({
       now: new Date('2026-04-07T10:00:00.000Z'),

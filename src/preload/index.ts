@@ -5,6 +5,7 @@
 
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
+  ActiveSlotPlayback,
   AppConfig,
   HealthStatus,
   DiagnosticsInfo,
@@ -48,6 +49,7 @@ export interface HexmonAPI {
 
   // Commands
   executeCommand: (command: string, payload?: unknown) => Promise<unknown>
+  reportActivePlayback: (payload: { sceneId?: string; activeSlots: ActiveSlotPlayback[] }) => void
 
   // Configuration
   getConfig: () => Promise<AppConfig>
@@ -140,6 +142,10 @@ contextBridge.exposeInMainWorld('hexmon', {
   // Commands
   executeCommand: async (command: string, payload?: unknown): Promise<unknown> => {
     return await ipcRenderer.invoke('execute-command', command, payload)
+  },
+
+  reportActivePlayback: (payload: { sceneId?: string; activeSlots: ActiveSlotPlayback[] }): void => {
+    ipcRenderer.send('player-active-playback', payload)
   },
 
   // Configuration

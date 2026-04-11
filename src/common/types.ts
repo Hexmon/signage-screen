@@ -31,6 +31,7 @@ export interface MTLSConfig {
   certPath: string
   keyPath: string
   caPath: string
+  strictCertificateValidation: boolean
   autoRenew: boolean
   renewBeforeDays: number
 }
@@ -111,7 +112,18 @@ export interface LayoutScene {
   aspectRatio?: string
   startsAt?: string
   endsAt?: string
+  serverTimeOffsetMs?: number
   slots: LayoutSceneSlot[]
+}
+
+export interface ActiveSlotPlayback {
+  scene_id: string
+  slot_id: string
+  item_id: string
+  media_id: string | null
+  schedule_id?: string | null
+  playback_instance_id: string
+  started_at: string
 }
 
 // CMS default media types
@@ -325,6 +337,8 @@ export interface SnapshotMediaEntry {
 export interface DeviceSnapshot {
   id?: string
   snapshot_id?: string
+  content_state?: 'scheduled' | 'default' | 'empty'
+  server_time?: string
   schedule?: SnapshotSchedule
   items?: SnapshotScheduleItem[]
   media_urls?: SnapshotMediaUrlMap
@@ -463,6 +477,8 @@ export interface HeartbeatPayload {
   temperature?: number
   current_schedule_id?: string
   current_media_id?: string
+  current_scene_id?: string
+  active_slots?: ActiveSlotPlayback[]
   memory_total_mb?: number
   memory_used_mb?: number
   memory_free_mb?: number
@@ -487,12 +503,93 @@ export interface HeartbeatPayload {
   power_source?: PowerSource
 }
 
+export type RequestQueueCategory = 'heartbeat' | 'screenshot' | 'command-ack' | 'default'
+
+export interface RequestQueueBudget {
+  maxItems: number
+  maxBytes: number
+  replayBatchSize: number
+  replayDelayMs: [number, number]
+}
+
+export interface RequestQueueCategoryStats {
+  pendingItems: number
+  pendingBytes: number
+  dropped: number
+  compacted: number
+}
+
+export interface RequestQueueStats {
+  pendingItems: number
+  pendingBytes: number
+  dropped: number
+  droppedBytes: number
+  compacted: number
+  compactedBytes: number
+  lastDropReason?: string
+  lastDropAt?: string
+  lastCompactionReason?: string
+  lastCompactionAt?: string
+  categories: Record<RequestQueueCategory, RequestQueueCategoryStats>
+}
+
+export interface RequestQueueBudgetSnapshot {
+  totalMaxItems: number
+  totalMaxBytes: number
+  categories: Record<RequestQueueCategory, RequestQueueBudget>
+}
+
+export interface RequestQueueOldestAgeSeconds {
+  all: number
+  heartbeat: number
+  screenshot: number
+  'command-ack': number
+  default: number
+}
+
+export interface ProofOfPlayReplayStats {
+  bufferItems: number
+  bufferBytes: number
+  spoolFiles: number
+  spoolBytes: number
+  droppedEvents: number
+  droppedBytes: number
+  compactedEvents: number
+  compactedBytes: number
+  lastDropReason?: string
+  lastDropAt?: string
+  lastCompactionReason?: string
+  lastCompactionAt?: string
+}
+
+export interface ProofOfPlayReplayBudgetSnapshot {
+  maxBufferEvents: number
+  maxBufferBytes: number
+  maxSpoolFiles: number
+  maxSpoolBytes: number
+  maxSpoolEventsPerFile: number
+  maxReplayBatchSize: number
+}
+
+export interface OfflineReplayStatus {
+  requestQueue: {
+    stats: RequestQueueStats
+    budgets: RequestQueueBudgetSnapshot
+    oldestAgeSeconds: RequestQueueOldestAgeSeconds
+  }
+  proofOfPlay: {
+    stats: ProofOfPlayReplayStats
+    budgets: ProofOfPlayReplayBudgetSnapshot
+  }
+}
+
 export interface HealthStatus {
   status: 'healthy' | 'degraded' | 'unhealthy'
   appVersion: string
   uptime: number
   lastScheduleSync?: string
   cacheUsage: CacheStats
+  offlineReplay: OfflineReplayStatus
   lastErrors: string[]
   systemStats: SystemStats
   timestamp: string
@@ -506,6 +603,10 @@ export interface ProofOfPlayEvent {
   device_id: string
   schedule_id: string
   media_id: string
+  playback_instance_id: string
+  scene_id?: string
+  slot_id?: string
+  item_id?: string
   start_time: string
   end_time: string
   duration: number
@@ -537,6 +638,7 @@ export interface DeviceCommand {
 
 export interface CommandAcknowledgment {
   commandId: string
+  deliveryToken?: string
   result: 'success' | 'error'
   message?: string
   data?: Record<string, unknown>
@@ -550,6 +652,7 @@ export interface Command {
   params?: Record<string, unknown>
   createdAt?: string
   expiresAt?: string
+  deliveryToken?: string
 }
 
 export interface CommandResult {
@@ -657,6 +760,7 @@ export type RecoveryKind = 'AUTH_INVALID' | 'DEVICE_NOT_REGISTERED' | 'PARTIAL_I
 
 export interface RecentCommandRecord {
   id: string
+  deliveryToken?: string
   firstSeenAt: string
   lastSeenAt: string
   source: 'heartbeat' | 'poll'

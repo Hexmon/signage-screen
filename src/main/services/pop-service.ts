@@ -7,37 +7,49 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { getLogger } from '../../common/logger'
 import { getConfigManager } from '../../common/config'
-import { DeviceApiError, ProofOfPlayEvent } from '../../common/types'
+import {
+  DeviceApiError,
+  ProofOfPlayEvent,
+  type ProofOfPlayReplayBudgetSnapshot,
+  type ProofOfPlayReplayStats,
+} from '../../common/types'
 import { atomicWrite, ensureDir, generateId, sleep } from '../../common/utils'
 import { getHttpClient } from './network/http-client'
 import { getPairingService } from './pairing-service'
 import { getLifecycleEvents } from './lifecycle-events'
+import {
+  POP_REPLAY_BUFFER_MAX_BYTES,
+  POP_REPLAY_BUFFER_MAX_EVENTS,
+  POP_REPLAY_MAX_BATCH_SIZE,
+  POP_REPLAY_MAX_EVENTS_PER_FILE,
+  POP_REPLAY_SPOOL_MAX_FILES,
+  deriveProofOfPlaySpoolMaxBytes,
+} from './offline-replay-budgets'
 
 const logger = getLogger('pop-service')
 
 interface ActivePlayback {
   scheduleId: string
   mediaId: string
+  playbackInstanceId: string
+  sceneId?: string
+  slotId?: string
+  itemId?: string
   startTimestamp: string
+}
+
+interface PlaybackStartInput {
+  scheduleId: string
+  mediaId: string
+  playbackInstanceId: string
+  sceneId?: string
+  slotId?: string
+  itemId?: string
+  startedAt?: string
 }
 
 interface BufferedProofOfPlayEvent extends ProofOfPlayEvent {
   source: 'live' | 'spool'
-}
-
-export interface ProofOfPlayReplayStats {
-  bufferItems: number
-  bufferBytes: number
-  spoolFiles: number
-  spoolBytes: number
-  droppedEvents: number
-  droppedBytes: number
-  compactedEvents: number
-  compactedBytes: number
-  lastDropReason?: string
-  lastDropAt?: string
-  lastCompactionReason?: string
-  lastCompactionAt?: string
 }
 
 interface SpoolFileEntry {
@@ -47,25 +59,18 @@ interface SpoolFileEntry {
   mtimeMs: number
 }
 
-const MAX_BUFFER_EVENTS = 100
-const MAX_BUFFER_BYTES = 512 * 1024
-const MAX_SPOOL_FILES = 32
-const MAX_SPOOL_BYTES_MIN = 1024 * 1024
-const MAX_SPOOL_BYTES_MAX = 16 * 1024 * 1024
-const MAX_SPOOL_EVENTS_PER_FILE = 50
-const MAX_REPLAY_BATCH_SIZE = 25
 const IDLE_FLUSH_MS = 60000
 const BACKLOG_FLUSH_MS = 15000
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value))
-}
 
 function stripReplayMetadata(event: BufferedProofOfPlayEvent | ProofOfPlayEvent): ProofOfPlayEvent {
   return {
     device_id: event.device_id,
     schedule_id: event.schedule_id,
     media_id: event.media_id,
+    playback_instance_id: event.playback_instance_id,
+    scene_id: event.scene_id,
+    slot_id: event.slot_id,
+    item_id: event.item_id,
     start_time: event.start_time,
     end_time: event.end_time,
     duration: event.duration,
@@ -97,7 +102,7 @@ export class ProofOfPlayService {
     const config = getConfigManager().getConfig()
     this.spoolPath = path.join(config.cache.path, 'pop-spool')
     this.statePath = path.join(config.cache.path, 'pop-spool-state.json')
-    this.maxSpoolBytes = clamp(Math.round(config.cache.maxBytes * 0.02), MAX_SPOOL_BYTES_MIN, MAX_SPOOL_BYTES_MAX)
+    this.maxSpoolBytes = deriveProofOfPlaySpoolMaxBytes(config.cache.maxBytes)
     ensureDir(this.spoolPath, 0o755)
 
     this.activePlaybacks = new Map()
@@ -118,25 +123,70 @@ export class ProofOfPlayService {
     )
   }
 
-  recordStart(scheduleId: string, mediaId: string): void {
-    const key = `${scheduleId}:${mediaId}`
-    const startTimestamp = new Date().toISOString()
+  recordStart(inputOrScheduleId: PlaybackStartInput | string, mediaId?: string): void {
+    const normalizedInput: PlaybackStartInput =
+      typeof inputOrScheduleId === 'string'
+        ? {
+            scheduleId: inputOrScheduleId,
+            mediaId: mediaId || inputOrScheduleId,
+            playbackInstanceId: `${inputOrScheduleId}:${mediaId || inputOrScheduleId}`,
+          }
+        : inputOrScheduleId
 
-    this.activePlaybacks.set(key, {
-      scheduleId,
-      mediaId,
+    const startTimestamp = normalizedInput.startedAt || new Date().toISOString()
+
+    this.activePlaybacks.set(normalizedInput.playbackInstanceId, {
+      scheduleId: normalizedInput.scheduleId,
+      mediaId: normalizedInput.mediaId,
+      playbackInstanceId: normalizedInput.playbackInstanceId,
+      sceneId: normalizedInput.sceneId,
+      slotId: normalizedInput.slotId,
+      itemId: normalizedInput.itemId,
       startTimestamp,
     })
 
-    logger.debug({ scheduleId, mediaId, startTimestamp }, 'Playback started')
+    logger.debug(
+      {
+        scheduleId: normalizedInput.scheduleId,
+        mediaId: normalizedInput.mediaId,
+        playbackInstanceId: normalizedInput.playbackInstanceId,
+        sceneId: normalizedInput.sceneId,
+        slotId: normalizedInput.slotId,
+        startTimestamp,
+      },
+      'Playback started'
+    )
   }
 
-  recordEnd(scheduleId: string, mediaId: string, completed: boolean, errorMessage?: string): void {
-    const key = `${scheduleId}:${mediaId}`
-    const active = this.activePlaybacks.get(key)
+  recordEnd(
+    playbackOrScheduleId: string,
+    mediaIdOrCompleted: string | boolean,
+    completedOrError?: boolean | string,
+    errorMessage?: string,
+  ): void {
+    const playbackInstanceId =
+      typeof mediaIdOrCompleted === 'string'
+        ? `${playbackOrScheduleId}:${mediaIdOrCompleted}`
+        : playbackOrScheduleId
+    const completed =
+      typeof mediaIdOrCompleted === 'boolean'
+        ? mediaIdOrCompleted
+        : typeof completedOrError === 'boolean'
+          ? completedOrError
+          : true
+    const resolvedErrorMessage =
+      typeof mediaIdOrCompleted === 'string'
+        ? typeof errorMessage === 'string'
+          ? errorMessage
+          : undefined
+        : typeof completedOrError === 'string'
+          ? completedOrError
+          : errorMessage
+
+    const active = this.activePlaybacks.get(playbackInstanceId)
 
     if (!active) {
-      logger.warn({ scheduleId, mediaId }, 'No active playback found for end event')
+      logger.warn({ playbackInstanceId }, 'No active playback found for end event')
       return
     }
 
@@ -148,8 +198,16 @@ export class ProofOfPlayService {
     const pairingService = getPairingService()
     const deviceId = pairingService.getDeviceId()
 
-    if (errorMessage) {
-      logger.warn({ scheduleId, mediaId, errorMessage }, 'Playback ended with error message')
+    if (resolvedErrorMessage) {
+      logger.warn(
+        {
+          scheduleId: active.scheduleId,
+          mediaId: active.mediaId,
+          playbackInstanceId: active.playbackInstanceId,
+          errorMessage: resolvedErrorMessage,
+        },
+        'Playback ended with error message'
+      )
     }
 
     if (!deviceId) {
@@ -160,8 +218,12 @@ export class ProofOfPlayService {
     const event: BufferedProofOfPlayEvent = {
       source: 'live',
       device_id: deviceId,
-      schedule_id: scheduleId,
-      media_id: mediaId,
+      schedule_id: active.scheduleId,
+      media_id: active.mediaId,
+      playback_instance_id: active.playbackInstanceId,
+      scene_id: active.sceneId,
+      slot_id: active.slotId,
+      item_id: active.itemId,
       start_time: active.startTimestamp,
       end_time: endTimestamp,
       duration: durationSeconds,
@@ -173,22 +235,31 @@ export class ProofOfPlayService {
       this.trimLiveBuffer().catch((error) => {
         logger.error({ error }, 'Failed to trim PoP buffer')
       })
-      logger.debug({ scheduleId, mediaId, durationSeconds, completed }, 'Playback ended')
+      logger.debug(
+        {
+          scheduleId: active.scheduleId,
+          mediaId: active.mediaId,
+          playbackInstanceId: active.playbackInstanceId,
+          durationSeconds,
+          completed,
+        },
+        'Playback ended'
+      )
 
-      if (this.eventBuffer.length >= MAX_BUFFER_EVENTS) {
+      if (this.eventBuffer.length >= POP_REPLAY_BUFFER_MAX_EVENTS) {
         this.flushEvents().catch((error) => {
           logger.error({ error }, 'Failed to flush events')
         })
       }
     } else {
-      logger.debug({ scheduleId, mediaId }, 'Duplicate event detected, skipping')
+      logger.debug({ playbackInstanceId: active.playbackInstanceId }, 'Duplicate event detected, skipping')
     }
 
-    this.activePlaybacks.delete(key)
+    this.activePlaybacks.delete(playbackInstanceId)
   }
 
   private isDuplicate(event: ProofOfPlayEvent): boolean {
-    const key = `${event.device_id}:${event.media_id}:${event.start_time}`
+    const key = `${event.device_id}:${event.playback_instance_id}`
     if (this.seenEvents.has(key)) {
       return true
     }
@@ -318,7 +389,7 @@ export class ProofOfPlayService {
     let overflowEvents: BufferedProofOfPlayEvent[] = []
     let bufferBytes = this.eventBuffer.reduce((total, event) => total + this.estimateEventSize(event), 0)
 
-    while (this.eventBuffer.length > MAX_BUFFER_EVENTS || bufferBytes > MAX_BUFFER_BYTES) {
+    while (this.eventBuffer.length > POP_REPLAY_BUFFER_MAX_EVENTS || bufferBytes > POP_REPLAY_BUFFER_MAX_BYTES) {
       const removed = this.eventBuffer.shift()
       if (!removed) {
         break
@@ -342,8 +413,8 @@ export class ProofOfPlayService {
     }
 
     const chunks: ProofOfPlayEvent[][] = []
-    for (let index = 0; index < events.length; index += MAX_SPOOL_EVENTS_PER_FILE) {
-      chunks.push(events.slice(index, index + MAX_SPOOL_EVENTS_PER_FILE))
+    for (let index = 0; index < events.length; index += POP_REPLAY_MAX_EVENTS_PER_FILE) {
+      chunks.push(events.slice(index, index + POP_REPLAY_MAX_EVENTS_PER_FILE))
     }
 
     for (const chunk of chunks) {
@@ -366,7 +437,7 @@ export class ProofOfPlayService {
     let totalBytes = files.reduce((total, file) => total + file.sizeBytes, 0)
     let remainingFiles = [...files]
 
-    while (remainingFiles.length > MAX_SPOOL_FILES || totalBytes > this.maxSpoolBytes) {
+    while (remainingFiles.length > POP_REPLAY_SPOOL_MAX_FILES || totalBytes > this.maxSpoolBytes) {
       const oldest = remainingFiles.shift()
       if (!oldest) {
         break
@@ -460,8 +531,8 @@ export class ProofOfPlayService {
         return
       }
 
-      const liveBatch = this.eventBuffer.splice(0, MAX_REPLAY_BATCH_SIZE)
-      const spoolBatch = await this.loadSpoolBatch(MAX_REPLAY_BATCH_SIZE - liveBatch.length)
+      const liveBatch = this.eventBuffer.splice(0, POP_REPLAY_MAX_BATCH_SIZE)
+      const spoolBatch = await this.loadSpoolBatch(POP_REPLAY_MAX_BATCH_SIZE - liveBatch.length)
       const replayBatch = [...liveBatch, ...spoolBatch.events]
       if (replayBatch.length === 0) {
         return
@@ -573,6 +644,17 @@ export class ProofOfPlayService {
     return JSON.parse(JSON.stringify(this.stats))
   }
 
+  getReplayBudget(): ProofOfPlayReplayBudgetSnapshot {
+    return {
+      maxBufferEvents: POP_REPLAY_BUFFER_MAX_EVENTS,
+      maxBufferBytes: POP_REPLAY_BUFFER_MAX_BYTES,
+      maxSpoolFiles: POP_REPLAY_SPOOL_MAX_FILES,
+      maxSpoolBytes: this.maxSpoolBytes,
+      maxSpoolEventsPerFile: POP_REPLAY_MAX_EVENTS_PER_FILE,
+      maxReplayBatchSize: POP_REPLAY_MAX_BATCH_SIZE,
+    }
+  }
+
   async cleanup(): Promise<void> {
     logger.info('Cleaning up Proof-of-Play service')
     this.stopPeriodicFlush()
@@ -596,6 +678,10 @@ export class ProofOfPlayService {
       device_id: event.device_id || event.deviceId || pairingService.getDeviceId() || '',
       schedule_id: event.schedule_id || event.scheduleId || '',
       media_id: event.media_id || event.mediaId || '',
+      playback_instance_id: event.playback_instance_id || event.playbackInstanceId || generateId(16),
+      scene_id: event.scene_id || event.sceneId,
+      slot_id: event.slot_id || event.slotId,
+      item_id: event.item_id || event.itemId,
       start_time: event.start_time || event.startTimestamp || event.start_timestamp || new Date().toISOString(),
       end_time: event.end_time || event.endTimestamp || event.end_timestamp || new Date().toISOString(),
       duration: normalizedDuration,

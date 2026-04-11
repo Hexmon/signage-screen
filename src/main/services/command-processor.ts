@@ -21,6 +21,7 @@ type CommandSource = 'heartbeat' | 'poll'
 const HEARTBEAT_STALE_MULTIPLIER = 2
 const FALLBACK_POLL_JITTER_FACTOR = 0.2
 const HEALTHY_POLL_JITTER_FACTOR = 0.1
+const REFRESH_COMMAND_JITTER_MS = 3000
 
 export class CommandProcessor {
   private pollTimer?: NodeJS.Timeout
@@ -54,13 +55,13 @@ export class CommandProcessor {
   async ingestCommands(rawCommands: Command[], source: CommandSource): Promise<void> {
     for (const rawCommand of rawCommands) {
       const command = this.normalizeCommand(rawCommand)
-      if (getDeviceStateStore().hasRecentCommand(command.id)) {
+      if (getDeviceStateStore().hasRecentCommand(command.id, command.deliveryToken)) {
         logger.debug({ commandId: command.id, source }, 'Skipping previously seen command')
         getPlayerMetrics().recordCommandOutcome(command.type, source, 'deduplicated')
         continue
       }
 
-      await getDeviceStateStore().recordCommandSeen(command.id, source)
+      await getDeviceStateStore().recordCommandSeen(command.id, source, command.deliveryToken)
       await this.processCommand(command, source)
     }
   }
@@ -179,6 +180,10 @@ export class CommandProcessor {
       ...command,
       type,
       params: payload,
+      deliveryToken:
+        typeof (command as unknown as { delivery_token?: string }).delivery_token === 'string'
+          ? (command as unknown as { delivery_token?: string }).delivery_token
+          : command.deliveryToken,
     }
   }
 
@@ -189,7 +194,7 @@ export class CommandProcessor {
 
     if (this.isRateLimited(command.type)) {
       getPlayerMetrics().recordCommandOutcome(command.type, source, 'rate_limited')
-      await this.acknowledgeCommand(command.id, {
+      await this.acknowledgeCommand(command.id, command.deliveryToken, {
         success: false,
         error: 'Rate limited',
         timestamp: new Date().toISOString(),
@@ -208,7 +213,7 @@ export class CommandProcessor {
           break
         case 'REFRESH':
         case 'REFRESH_SCHEDULE':
-          result = await this.handleRefreshSchedule()
+          result = await this.handleRefreshSchedule(command)
           break
         case 'SCREENSHOT':
           result = await this.handleScreenshot()
@@ -242,12 +247,12 @@ export class CommandProcessor {
         }
       }
 
-      await this.acknowledgeCommand(command.id, result)
+      await this.acknowledgeCommand(command.id, command.deliveryToken, result)
       this.updateRateLimit(command.type)
     } catch (error) {
       logger.error({ error, commandId: command.id }, 'Command processing failed')
       getPlayerMetrics().recordCommandOutcome(command.type, source, 'error')
-      await this.acknowledgeCommand(command.id, {
+      await this.acknowledgeCommand(command.id, command.deliveryToken, {
         success: false,
         error: (error as Error).message,
         timestamp: new Date().toISOString(),
@@ -270,7 +275,14 @@ export class CommandProcessor {
     }
   }
 
-  private async handleRefreshSchedule(): Promise<CommandResult> {
+  private async handleRefreshSchedule(command: Command): Promise<CommandResult> {
+    const reason = typeof command.params?.['reason'] === 'string' ? String(command.params?.['reason']) : undefined
+    if (reason !== 'EMERGENCY' && reason !== 'TAKE_DOWN' && reason !== 'DEFAULT_MEDIA') {
+      const jitterMs = Math.max(0, Math.round(Math.random() * REFRESH_COMMAND_JITTER_MS))
+      if (jitterMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, jitterMs))
+      }
+    }
     await getSnapshotManager().refreshSnapshot()
     try {
       await getDefaultMediaService().refreshNow('refresh-command')
@@ -297,7 +309,15 @@ export class CommandProcessor {
   private handleSetScreenshotInterval(command: Command): CommandResult {
     const screenshotService = getScreenshotService()
     const enabledParam = command.params?.['enabled']
-    const enabled = typeof enabledParam === 'boolean' ? enabledParam : true
+    if (typeof enabledParam !== 'boolean') {
+      return {
+        success: false,
+        error: 'Missing screenshot enabled flag',
+        timestamp: new Date().toISOString(),
+      }
+    }
+
+    const enabled = enabledParam
 
     const rawIntervalSeconds = command.params?.['interval_seconds']
     const rawIntervalMilliseconds = command.params?.['interval_ms'] ?? command.params?.['intervalMs']
@@ -360,7 +380,7 @@ export class CommandProcessor {
     }
   }
 
-  private async acknowledgeCommand(commandId: string, result: CommandResult): Promise<void> {
+  private async acknowledgeCommand(commandId: string, deliveryToken: string | undefined, result: CommandResult): Promise<void> {
     const deviceId = getPairingService().getDeviceId()
     if (!deviceId) {
       getPlayerMetrics().recordCommandAck('skipped_unpaired')
@@ -371,7 +391,7 @@ export class CommandProcessor {
       const httpClient = getHttpClient()
       await httpClient.post(
         `/api/v1/device/${deviceId}/commands/${commandId}/ack`,
-        {},
+        deliveryToken ? { delivery_token: deliveryToken } : {},
         {
           retryPolicy: {
             maxAttempts: 3,
@@ -380,7 +400,7 @@ export class CommandProcessor {
           },
         }
       )
-      await getDeviceStateStore().recordCommandAcknowledged(commandId)
+      await getDeviceStateStore().recordCommandAcknowledged(commandId, deliveryToken)
       logger.debug({ commandId, success: result.success }, 'Command acknowledged')
       getPlayerMetrics().recordCommandAck('success')
     } catch (error) {
@@ -397,12 +417,16 @@ export class CommandProcessor {
       }
 
       const requestQueue = getRequestQueue()
-      await requestQueue.enqueue({
+      const queued = await requestQueue.enqueue({
         method: 'POST',
         url: `/api/v1/device/${deviceId}/commands/${commandId}/ack`,
-        data: {},
+        data: deliveryToken ? { delivery_token: deliveryToken } : {},
         maxRetries: 3,
       })
+      if (!queued) {
+        getPlayerMetrics().recordCommandAck('failed')
+        throw new Error('Command acknowledgement retry queue rejected the payload')
+      }
       getPlayerMetrics().recordCommandAck('queued')
     }
   }

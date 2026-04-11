@@ -60,7 +60,7 @@ describe('Snapshot Manager', () => {
     })
   })
 
-  it('should use offline fallback on 404', async () => {
+  it('should treat a 404 snapshot response as intentional no-content instead of offline fallback', async () => {
     const mediaDir = path.join(cacheDir, 'media')
     fs.mkdirSync(mediaDir, { recursive: true })
 
@@ -98,8 +98,8 @@ describe('Snapshot Manager', () => {
 
     const playlist = await snapshotManager.refreshSnapshot()
 
-    expect(playlist?.mode).to.equal('normal')
-    expect(playlist?.items.length).to.be.greaterThan(0)
+    expect(playlist?.mode).to.equal('empty')
+    expect(playlist?.items).to.deep.equal([])
   })
 
   it('should treat a successful empty snapshot as a valid empty playback state', async () => {
@@ -298,7 +298,7 @@ describe('Snapshot Manager', () => {
     expect(playlist?.mode).to.equal('normal')
     expect(playlist?.items).to.have.length(1)
     expect(playlist?.items[0]?.type).to.equal('scene')
-    expect(playlist?.items[0]?.mediaId).to.equal('media-left')
+    expect(playlist?.items[0]?.mediaId).to.equal(undefined)
     expect((playlist?.items[0]?.meta as any)?.scene?.slots).to.have.length(2)
   })
 

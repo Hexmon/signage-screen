@@ -1,6 +1,7 @@
 const { expect } = require('chai')
 const fs = require('fs')
 const path = require('path')
+const crypto = require('crypto')
 const { createTempDir, cleanupTempDir } = require('../../helpers/test-utils.ts')
 
 describe('HTTP Client', () => {
@@ -52,9 +53,19 @@ describe('HTTP Client', () => {
     })
   })
 
-  it('should send x-device-serial from persisted fingerprint on device endpoints', async () => {
+  it('should send device identity headers on device endpoints', async () => {
     const { getHttpClient } = require('../../../src/main/services/network/http-client')
     const { getDeviceStateStore } = require('../../../src/main/services/device-state-store')
+    const { getCertificateManager } = require('../../../src/main/services/cert-manager')
+
+    const { privateKey } = crypto.generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    })
+    const certManager = getCertificateManager()
+    const paths = certManager.getCertificatePaths()
+    fs.writeFileSync(paths.key, privateKey)
 
     await getDeviceStateStore().update({
       deviceId: 'device-1',
@@ -65,6 +76,9 @@ describe('HTTP Client', () => {
     const client = httpClient.getAxiosInstance()
     client.defaults.adapter = async (config: any) => {
       expect(config.headers['x-device-serial']).to.equal('fingerprint-123')
+      expect(config.headers['x-device-auth-version']).to.equal('v1')
+      expect(config.headers['x-device-timestamp']).to.be.a('string')
+      expect(config.headers['x-device-signature']).to.be.a('string')
       expect(config.url).to.equal('/api/v1/device/screenshot')
       return {
         data: {
